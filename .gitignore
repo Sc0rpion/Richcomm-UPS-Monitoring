@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+build/
+dist/
+coverage/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+public/
+src/
+index.html
+vite.config.ts
+tsconfig.json
+package.json
+.env.example
+
+# UPS Logs & Temp Files
+PowerEvent*.log
+Monitor.pid
+/tmp/ups_status.json
+upsdemo_*/
+
+# OS & Environment
+.DS_Store
+*.log
+.env*
+!.env.example

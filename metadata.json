@@ -1,0 +1,6 @@
+{
+  "name": "UPS Guardian & Driver Diagnostician",
+  "description": "Interactive diagnostics, protocol analyzer, and fixed driver generator for SVC / Richcomm 0925:1234 UPS in Linux and Docker.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
