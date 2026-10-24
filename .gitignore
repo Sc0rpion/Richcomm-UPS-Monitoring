@@ -13,13 +13,17 @@ __pycache__/
 env/
 venv/
 .venv/
+
+# Web App Artifacts
 public/
 src/
 index.html
 vite.config.ts
 tsconfig.json
 package.json
-.env.example
+bun.lock
+metadata.json
+.env*
 
 # UPS Logs & Temp Files
 PowerEvent*.log
@@ -30,5 +34,3 @@ upsdemo_*/
 # OS & Environment
 .DS_Store
 *.log
-.env*
-!.env.example

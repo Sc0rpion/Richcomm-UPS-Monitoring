@@ -1,446 +1,311 @@
 # SVC / Richcomm Technologies UPS — Modern Driver & Integration Suite
-### Полный стек драйверов, демона мониторинга и интеграции для Home Assistant (HACS)
-**(USB Vendor ID: `0x0925`, Product ID: `0x1234` / Richcomm USB to UART Bridge)**
+
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom_Repository-orange.svg)](https://hacs.xyz/)
+[![Home Assistant](https://img.shields.io/badge/Home_Assistant-2024.1.0+-blue.svg)](https://www.home-assistant.io/)
+[![Python 3.8+](https://img.shields.io/badge/Python-3.8+-green.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+**Repository URL**: `https://github.com/Sc0rpion/Richcomm-UPS-Monitoring`  
+**Languages**: [English](README.md) | [Русский](README.ru.md)
 
 ---
 
-## 📌 Оглавление
-1. [Обзор проекта](#1-обзор-проекта)
-2. [Структура репозитория](#2-структура-репозитория)
-3. [Архитектура обмена данными между ПК и ИБП](#3-архитектура-обмена-данными-между-пк-и-ибп)
-   - [Аппаратный контроллер и уровень ядра (USB-HID / hiddev)](#31-аппаратный-контроллер-и-уровень-ядра-usb-hid--hiddev)
-   - [Протокол кадрирования Richcomm FRAMED 0xA0](#32-протокол-кадрирования-richcomm-framed-0xa0)
-   - [Приём входящих кадров UART из отчётов HID](#33-приём-входящих-кадров-uart-из-отчётов-hid)
-   - [Протокол Megatec: команды и форматы данных](#34-протокол-megatec-команды-и-форматы-данных)
-   - [Стабилизация управления звуком (бипером)](#35-стабилизация-управления-звуком-бипером)
-   - [Резервный бинарный BCD-протокол](#36-резервный-бинарный-bcd-протокол)
-4. [Как работал оригинальный драйвер и почему он сломался](#4-как-работал-оригинальный-драйвер-и-почему-он-сломался)
-   - [Исторический контекст (GCC 3.2.2 / Red Hat 8/9 / glibc 2.3.2)](#41-исторический-контекст)
-   - [Архитектура межпроцессного взаимодействия (SysV IPC SHM 0x1B56)](#42-архитектура-межпроцессного-взаимодействия-sysv-ipc)
-   - [Формат бинарной конфигурации TimeCfg.conf](#43-формат-бинарной-конфигурации-timecfgconf)
-   - [Критические ошибки оригинального кода](#44-критические-ошибки-оригинального-кода)
-5. [Подробный разбор файла рекомпиляции: `ups_monitor.py`](#5-подробный-разбор-файла-рекомпиляции-ups_monitorpy)
-   - [Назначение и 100% совместимость](#51-назначение-и-совместимость)
-   - [Архитектура классов и модулей](#52-архитектура-классов-и-модулей)
-   - [Встроенный эмулятор MegatecSimulator на базе PTY](#53-встроенный-эмулятор-megatecsimulator-на-базе-pty)
-   - [Набор юнит-тестов (selftest)](#54-набор-юнит-тестов-selftest)
-6. [Руководство по директориям](#6-руководство-по-директориям)
-   - [Папка `standalone/` (Чистый Python CLI и демон)](#61-папка-standalone)
-   - [Папка `ha/` (Интеграция Home Assistant / HACS)](#62-папка-ha)
-   - [Папка `recompiled/` (Реконструкция оригинального ups_monitor)](#63-папка-recompiled)
+## 📌 Table of Contents
+1. [Overview](#1-overview)
+2. [HACS Installation (Home Assistant)](#2-hacs-installation-home-assistant)
+3. [Repository Structure](#3-repository-structure)
+4. [Hardware & Data Exchange Architecture](#4-hardware--data-exchange-architecture)
+   - [Kernel & USB-HID Layer (`hiddev`)](#41-kernel--usb-hid-layer-hiddev)
+   - [Richcomm FRAMED 0xA0 Protocol](#42-richcomm-framed-0xa0-protocol)
+   - [Incoming UART Packet Reception](#43-incoming-uart-packet-reception)
+   - [Megatec Protocol Specification](#44-megatec-protocol-specification)
+   - [Beeper Stabilization Algorithm](#45-beeper-stabilization-algorithm)
+   - [Binary BCD Fallback Protocol](#46-binary-bcd-fallback-protocol)
+5. [Legacy Driver Analysis & Historical Bugs](#5-legacy-driver-analysis--historical-bugs)
+   - [Historical Context (GCC 3.2.2 / Red Hat 8/9 / glibc 2.3.2)](#51-historical-context)
+   - [SysV IPC Shared Memory (Key 0x1B56, 224 Bytes)](#52-sysv-ipc-shared-memory-key-0x1b56)
+   - [Binary Configuration File `TimeCfg.conf` (52 Bytes)](#53-binary-configuration-file-timecfgconf)
+   - [Dissected Bugs in the Original C Code](#54-dissected-bugs-in-the-original-c-code)
+6. [Deep Dive: The Recompiled Daemon (`ups_monitor.py`)](#6-deep-dive-the-recompiled-daemon-ups_monitorpy)
+   - [100% Binary & Memory Compatibility](#61-100-binary--memory-compatibility)
+   - [Class Architecture & Transports](#62-class-architecture--transports)
+   - [Virtual PTY UPS Simulator (`MegatecSimulator`)](#63-virtual-pty-ups-simulator-megatecsimulator)
+   - [Automated Test Suite (`selftest`)](#64-automated-test-suite-selftest)
+7. [Directory Guides](#7-directory-guides)
+   - [`standalone/` (Pure Python CLI & Daemon)](#71-standalone-directory)
+   - [`custom_components/svc_ups/` (Native Home Assistant)](#72-home-assistant-integration)
+   - [`recompiled/` (ELF32 Reconstructed Daemon)](#73-recompiled-directory)
 
 ---
 
-## 1. Обзор проекта
+## 1. Overview
 
-ИБП марки **SVC** (а также ряд моделей PowerCom, Trust, Ippon и Mustek на чипах **Richcomm Technologies**, VID `0x0925`, PID `0x1234`) используют мост USB-to-UART с закрытым протоколом инкапсуляции.
+UPS units manufactured by **SVC** (as well as select models from PowerCom, Trust, Ippon, and Mustek using **Richcomm Technologies** chips, VID `0x0925`, PID `0x1234`) utilize a proprietary USB-to-UART bridge.
 
-Поставлявшееся с ними оригинальное ПО для Linux (`ups_monitor`, `ups_status`, `ups_manager`, `ups_config`) было скомпилировано в 2002–2003 годах под 32-битную архитектуру x86 и более 20 лет не обновлялось. На современных 64-битных ОС (Debian, Ubuntu, Alpine, Synology DSM, Proxmox, Home Assistant OS) оно не запускается из-за отсутствия 32-битного рантайма, падает с ошибками `Segmentation fault`, блокирует USB-устройство или выдаёт неверные показания.
+The legacy Linux software bundle (`ups_monitor`, `ups_status`, `ups_manager`, `ups_config`) was built in 2002–2003 for 32-bit x86 systems (glibc 2.3.2). On modern 64-bit systems (Debian 11/12, Ubuntu 20.04/22.04/24.04, Alpine, Home Assistant OS, Synology DSM, Proxmox), this software fails to execute (`Exec format error` / missing 32-bit runtime), suffers from segmentation faults, or deadlocks on `/dev/usb/hiddev0`.
 
-**Данный репозиторий решает эту проблему полностью и разделен на три независимых инструмента:**
-1. **`standalone/`**: Самодостаточный скрипт `upstest.py` без зависимостей — консольный опрос, JSON-экспорт, фоновый демон мониторинга и аппаратная диагностика.
-2. **`ha/`**: Готовая к публикации в **HACS (Home Assistant Community Store)** интеграция Home Assistant с автообновлением, динамическим считыванием версии прошивки из ИБП и переключателем звука (Mute).
-3. **`recompiled/`**: Точная Python-реконструкция оригинального демона `ups_monitor.py`, полученная методом обратной разработки (реверс-инжиниринга) оригинального ELF32-бинарника, с поддержкой SysV Shared Memory, бинарного конфига `TimeCfg.conf`, встроенного симулятора PTY и исправлением критических багов.
+This repository provides a complete, modern replacement:
+1. **Native Home Assistant Integration (HACS Compliant)**: Direct GUI integration with auto-updates, dynamic hardware identity retrieval (`I\r`), and a stabilized Mute switch.
+2. **Standalone Pure Python CLI & Daemon (`standalone/upstest.py`)**: Zero external dependencies (Python stdlib only), JSON telemetry export, background daemon, and hardware diagnostics.
+3. **Reconstructed Legacy Daemon (`recompiled/ups_monitor.py`)**: 100% structure-compatible Python reimplementation of the disassembled ELF32 binary with SysV Shared Memory (`0x1B56`), `TimeCfg.conf` support, and a built-in virtual PTY simulator.
 
 ---
 
-## 2. Структура репозитория
+## 2. HACS Installation (Home Assistant)
+
+This repository is **fully compliant** with HACS integration guidelines:
+
+1. Open **HACS** in your Home Assistant sidebar.
+2. Navigate to **Integrations**.
+3. In the top right corner, click the three dots (**⋮**) &rarr; **Custom repositories**.
+4. In the **Repository** field, paste:
+   ```text
+   https://github.com/Sc0rpion/Richcomm-UPS-Monitoring
+   ```
+5. In the **Type** dropdown, select **Integration**.
+6. Click **Add**, find **SVC Richcomm UPS**, and click **Download**.
+7. Restart Home Assistant.
+8. Go to **Settings &rarr; Devices & Services &rarr; Add Integration &rarr; Search "SVC Richcomm UPS"**.
+
+---
+
+## 3. Repository Structure
 
 ```text
 .
-├── README.md                          <-- Полная архитектурная и техническая документация
-├── .gitignore                         <-- Настройки исключения временных файлов и логов
+├── custom_components/svc_ups/         <-- Root HACS integration folder
+│   ├── manifest.json                  <-- Domain 'svc_ups', version '1.1.0'
+│   ├── driver.py                      <-- Raw hiddev driver (zero external pip packages)
+│   ├── coordinator.py                 <-- Polling coordinator + hardware identity cache
+│   ├── sensor.py                      <-- Voltages, battery %, load %, freq, model, FW sensors
+│   ├── binary_sensor.py               <-- AC power, battery low, AVR, problem, test sensors
+│   ├── switch.py                      <-- Stabilized beeper toggle switch (Q\r)
+│   ├── button.py                      <-- Battery self-test & cancel buttons (T\r, CT\r)
+│   └── config_flow.py                 <-- Web UI configuration wizard
 │
-├── standalone/                        <-- ЧИСТЫЙ PYTHON: Автономный драйвер и демон
-│   ├── upstest.py                     <-- Единый скрипт: CLI, Daemon, Тесты, JSON, Бипер
-│   └── README.md                      <-- Инструкция по использованию CLI и демона
+├── hacs.json                          <-- Root HACS metadata (render_readme, homeassistant min version)
+├── info.md                            <-- HACS store presentation card (English)
+├── README.md                          <-- Master documentation (English)
+├── README.ru.md                       <-- Master documentation (Russian)
 │
-├── ha/                                <-- HOME ASSISTANT: Репозиторий для HACS
-│   ├── hacs.json                      <-- Метаданные интеграции для магазина HACS
-│   ├── info.md                        <-- Карточка интеграции для каталога HACS
-│   ├── README.md                      <-- Руководство по установке и автоматизациям
-│   ├── docker-compose.yml             <-- Автономный мост MQTT Discovery для Docker/NAS
-│   ├── mqtt_bridge.py                 <-- Python-мост с поддержкой MQTT Auto-Discovery
-│   └── custom_components/
-│       └── svc_ups/                   <-- Нативная интеграция Home Assistant
-│           ├── __init__.py            <-- Загрузка и выгрузка ConfigEntry
-│           ├── manifest.json          <-- Версия (v1.1.0), домен и зависимости
-│           ├── const.py               <-- Константы и конфигурация
-│           ├── driver.py              <-- Прямой hiddev-драйвер без зависимостей
-│           ├── coordinator.py         <-- DataUpdateCoordinator + паспорт I\r
-│           ├── sensor.py              <-- Сенсоры напряжений, нагрузки, АКБ, частоты
-│           ├── binary_sensor.py       <-- Бинарные сенсоры сети, разряда, AVR, аварии
-│           ├── switch.py              <-- Стабилизированный переключатель пищалки (Q\r)
-│           ├── button.py              <-- Кнопки запуска/отмены селф-теста (T\r, CT\r)
-│           └── config_flow.py         <-- Графический мастер добавления устройства
+├── standalone/                        <-- Pure Python standalone suite
+│   ├── upstest.py                     <-- Single-file CLI, daemon, test suite, and JSON exporter
+│   ├── README.md                      <-- Standalone CLI guide (English)
+│   └── README.ru.md                   <-- Standalone CLI guide (Russian)
 │
-└── recompiled/                        <-- РЕКОМПИЛЯЦИЯ: Реконструкция ELF32 ups_monitor
-    ├── ups_monitor.py                 <-- 100% совместимый демон (SysV SHM, TimeCfg, PTY)
-    └── README.md                      <-- Подробное описание реверс-инжиниринга и структур
+├── recompiled/                        <-- Disassembled ELF32 replacement
+│   ├── ups_monitor.py                 <-- Reconstructed daemon (SysV SHM, TimeCfg, PTY simulator)
+│   ├── README.md                      <-- Reverse engineering technical report (English)
+│   └── README.ru.md                   <-- Reverse engineering technical report (Russian)
+│
+└── ha/                                <-- Remote bridge files (Synology / Proxmox)
+    ├── docker-compose.yml             <-- Docker container for remote USB hosts
+    └── mqtt_bridge.py                 <-- Standalone MQTT Auto-Discovery bridge
 ```
 
 ---
 
-## 3. Архитектура обмена данными между ПК и ИБП
+## 4. Hardware & Data Exchange Architecture
 
-### 3.1. Аппаратный контроллер и уровень ядра (USB-HID / hiddev)
-В контроллере Richcomm (VID `0x0925`, PID `0x1234`) встроен мост между USB-интерфейсом и внутренним микроконтроллером ИБП.
-Устройство регистрируется в подсистеме ядра Linux не как виртуальный COM-порт (`/dev/ttyUSB*` или `/dev/ttyACM*`), а как интерфейс **USB Human Interface Device (HID)**:
-* Узлы в файловой системе: `/dev/usb/hiddev0` .. `/dev/usb/hiddev15` (major `180`, minor `96 + i`).
-* Взаимодействие осуществляется через системные вызовы `ioctl()`:
-  - `HIDIOCGDEVINFO (0x801C4803)`: опрос дескриптора устройства (структура `hiddev_devinfo`, содержащая `vendor` и `product`).
-  - `HIDIOCGUCODE (0xC018480D)` / `HIDIOCGUSAGE (0xC018480B)`: связывание полей дескриптора отчётов.
-  - `HIDIOCSUSAGE (0x4018480C)`: установка значения конкретного usage-поля (поле, индекс, значение).
-  - `HIDIOCSREPORT (0x400C4808)`: генерация исходящего USB Feature-отчёта (`SET_REPORT`).
+### 4.1. Kernel & USB-HID Layer (`hiddev`)
+The Richcomm USB controller presents itself to Linux as a USB HID device rather than a virtual serial device:
+* **Device nodes**: `/dev/usb/hiddev0` through `/dev/usb/hiddev15` (major `180`, minor `96 + i`).
+* **Kernel ioctls used**:
+  - `HIDIOCGDEVINFO (0x801C4803)`: Queries `struct hiddev_devinfo` to match Vendor ID `0x0925` and Product ID `0x1234`.
+  - `HIDIOCGUCODE (0xC018480D)` / `HIDIOCGUSAGE (0xC018480B)`: Binds report descriptors.
+  - `HIDIOCSUSAGE (0x4018480C)`: Sets individual usage report values.
+  - `HIDIOCSREPORT (0x400C4808)`: Transmits an output feature report (`SET_REPORT`).
 
-> **Важная деталь знакового расширения (Sign-Extension):**  
-> Поля значений в ioctl ядра Linux имеют тип `signed int32`. Если передаётся байт больше 127 (`0x80`..`0xFF`), его необходимо явно приводить к знаковому числу (`val - 256`), иначе вызов `HIDIOCSUSAGE` завершится с ошибкой `EINVAL` (Invalid argument).
+> **Signed 32-bit Sign Extension**:  
+> In Linux kernel ioctl calls, usage values are passed as `signed int32`. Passing unsigned byte values greater than 127 (`0x80`..`0xFF`) results in `EINVAL` unless explicitly sign-extended (`val - 256` if `val > 127`).
 
-#### Инициализация скорости UART (SetBaud)
-При старте микроконтроллер моста по умолчанию находится в неопределённом состоянии. Драйвер обязан переключить скорость UART на **2400 бод**:
-Формула делителя: $\text{Divider} = \frac{500000}{\text{Baud}} = \frac{500000}{2400} \approx 208 = \text{0xD0}$.  
-Отправляется 4-байтовый PDU: `[0x80, 0xD0, 0x00, 0x00]`.
+#### Baud Rate Initialization (`SetBaud`)
+To initialize the internal UART to **2400 baud**, the driver transmits a 4-byte feature report PDU:
+$$\text{Divider} = \frac{500000}{\text{Baud}} = \frac{500000}{2400} \approx 208 = \text{0xD0}$$
+$$\mathbf{PDU}_{\text{SetBaud}} = [\, 0\text{x80} \,,\; 0\text{xD0} \,,\; 0\text{x00} \,,\; 0\text{x00} \,]$$
 
 ---
 
-### 3.2. Протокол кадрирования Richcomm FRAMED 0xA0
-Обычная запись сырых ASCII-строк в `/dev/usb/hiddev0` не работает, так как микросхема ожидает кадрированные пакеты фиксированного размера в 4 байта.
-
-Для передачи текстовой команды (например, `Q1\r`) используется протокол инкапсуляции:
-1. Данные разбиваются на фрагменты **не более 3 байт**.
-2. Каждый фрагмент упаковывается в 4-байтовый PDU вида:
+### 4.2. Richcomm FRAMED 0xA0 Protocol
+Raw text sent directly to `/dev/usb/hiddev` is rejected. The controller requires command bytes to be framed into 4-byte PDUs:
+1. Data is segmented into chunks of **at most 3 bytes**.
+2. Each chunk is framed into a 4-byte PDU:
    $$\mathbf{PDU} = [\, (0\text{xA0} \mid \text{Length}) \,,\; \text{byte}_0 \,,\; \text{byte}_1 \,,\; \text{byte}_2 \,]$$
-   где свободные байты добиваются нулями `0x00`.
-3. Между отправками фрагментов соблюдается пауза:
-   $$T_{\text{pause}} = \text{Length} \times \frac{11000}{\text{Baud}}\;\text{мс} \approx \text{Length} \times 4.58\;\text{мс}$$
+   where unneeded trailing bytes are padded with `0x00`.
+3. An inter-chunk delay is enforced:
+   $$T_{\text{pause}} = \text{Length} \times \frac{11000}{\text{Baud}}\;\text{ms} \approx \text{Length} \times 4.58\;\text{ms}$$
 
-#### Пример отправки команды `Q1\r` (длина 3 байта: `0x51`, `0x31`, `0x0D`):
-* Заголовок: $0\text{xA0} \mid 3 = 0\text{xA3}$
-* Итоговый пакет: `[0xA3, 0x51, 0x31, 0x0D]`
-
-#### Пример отправки команды отмены теста `CT\r` (длина 3 байта: `0x43`, `0x54`, `0x0D`):
-* Итоговый пакет: `[0xA3, 0x43, 0x54, 0x0D]`
-
-#### Пример отправки однобайтовой команды `Q\r` (2 байта: `0x51`, `0x0D`):
-* Заголовок: $0\text{xA0} \mid 2 = 0\text{xA2}$
-* Итоговый пакет: `[0xA2, 0x51, 0x0D, 0x00]`
+| Command | ASCII | Bytes (Hex) | Framed PDU |
+|---|---|---|---|
+| Query Status | `Q1\r` | `51 31 0D` (len 3) | `[0xA3, 0x51, 0x31, 0x0D]` |
+| Query Identity | `I\r` | `49 0D` (len 2) | `[0xA2, 0x49, 0x0D, 0x00]` |
+| Toggle Beeper | `Q\r` | `51 0D` (len 2) | `[0xA2, 0x51, 0x0D, 0x00]` |
+| Self-Test (10s) | `T\r` | `54 0D` (len 2) | `[0xA2, 0x54, 0x0D, 0x00]` |
+| Cancel Self-Test | `CT\r` | `43 54 0D` (len 3) | `[0xA3, 0x43, 0x54, 0x0D]` |
 
 ---
 
-### 3.3. Приём входящих кадров UART из отчётов HID
-Фоновый поток драйвера непрерывно считывает поток событий ядра из дескриптора `hiddev` блоками по 8 байт (структура `struct hiddev_event`):
-```c
-struct hiddev_event {
-    unsigned int hid;    // Идентификатор поля usage
-    int value;           // Значение байта
-};
-```
-События накапливаются в 6-байтовый сырой массив `rep[0..5]`:
-* Если `rep[0] & 0x80 != 0` — это входящие байты из UART!
-  Количество полезных байт: $N = \min(\text{rep}[0] \ \& \ 7,\; 5)$. Байты `rep[1 .. 1 + N]` добавляются в кольцевой буфер UART.
-* Если `rep[0] & 0x80 == 0` — это бинарный отчёт чипа.
-
-Каждый входящий отчёт также несёт **аппаратный статус-байт** контроллера (например, `0xC0`):
-* Бит 7 (`0x80`): Питание 220V подключено (`AC Normal`).
-* Бит 6 (`0x40`): Батарея заряжена (`Battery Normal`).
+### 4.3. Incoming UART Packet Reception
+A background worker reads 8-byte events (`struct hiddev_event`) from the kernel:
+* The report bytes are assembled into 6-byte packets `rep[0..5]`.
+* If `rep[0] & 0x80 != 0`, it is a UART data frame. The payload length is $N = \min(\text{rep}[0] \ \& \ 7,\; 5)$, and bytes `rep[1 .. 1 + N]` are appended to the UART ring buffer.
+* The upper bits of `rep[0]` contain the hardware status byte (e.g. `0xC0`):
+  - Bit 7 (`0x80`): AC Utility 220V present (`Normal`).
+  - Bit 6 (`0x40`): Battery healthy (`Normal`).
 
 ---
 
-### 3.4. Протокол Megatec: команды и форматы данных
-После сборки потока байт из UART-буфера драйвер взаимодействует с ИБП по стандартному протоколу **Megatec**. Все команды завершаются символом возврата каретки `\r` (`0x0D`).
+### 4.4. Megatec Protocol Specification
 
 ```
- ПК                                    ИБП (SVC Richcomm)
- │                                            │
- │ ── PDU [0x80, 0xD0, 0x00, 0x00] (SetBaud) ─> │  (Инициализация 2400 бод)
- │                                            │
- │ ── PDU [0xA3, 'Q', '1', '\r'] (Статус Q1) ─> │
- │ <─ '(231.0 000.0 232.0 010 49.0 13.7 ...' ──│  (47 байт: Uвх, Uвых, АКБ...)
- │                                            │
- │ ── PDU [0xA2, 'I', '\r', 0x00] (Паспорт I) ─>│
- │ <─ '#SVC            V-650-F-LCD V1.2       ' ──│  (Паспортные данные)
- │                                            │
- │ ── PDU [0xA2, 'Q', '\r', 0x00] (Бипер Q) ──> │  (Инверсия звука)
- │ <─ (пауза 350 мс для срабатывания реле) ─── │
- │ ── PDU [0xA3, 'Q', '1', '\r'] (Проверка) ──> │
- │ <─ Проверка бита b0 в ответе ────────────── │
+ Host PC                                  SVC Richcomm UPS
+    │                                             │
+    │ ── PDU [0x80, 0xD0, 0x00, 0x00] (SetBaud) ─> │  (Initialize 2400 baud)
+    │                                             │
+    │ ── PDU [0xA3, 'Q', '1', '\r'] (Query Q1) ──> │
+    │ <─ '(231.0 000.0 232.0 010 49.0 13.7 ...' ──│  (47-byte status frame)
+    │                                             │
+    │ ── PDU [0xA2, 'I', '\r', 0x00] (Identity) ─> │
+    │ <─ '#SVC            V-650-F-LCD V1.2       '─│  (Model & firmware version)
+    │                                             │
+    │ ── PDU [0xA2, 'Q', '\r', 0x00] (Beeper) ───> │  (Toggle beeper)
+    │ <─ [350 ms settling delay for sound relay] ─│
+    │ ── PDU [0xA3, 'Q', '1', '\r'] (Verify) ────> │
+    │ <─ Bit b0 confirmed flipped ────────────────│
 ```
 
-#### 1. Команда запроса статуса `Q1\r`
-Ответ начинается с символа `(` и оканчивается `\r` (длина 47 байт):
+#### Status Inquiry: `Q1\r`
+The UPS responds with a 47-character string:
 ```text
 (MMM.M NNN.N PPP.P QQQ RR.R S.SS TT.T b7b6b5b4b3b2b1b0\r
 ```
-* `MMM.M` — Входное напряжение сети (Вольт, например `231.0`)
-* `NNN.N` — Опорное аварийное напряжение сети (`000.0` или `140.0`, игнорируется)
-* `PPP.P` — Выходное напряжение ИБП (Вольт, например `232.0`)
-* `QQQ` — Процент нагрузки (0..100%, например `010` = 10%)
-* `RR.R` — Частота сети (Гц, например `49.0`)
-* `S.SS` — Напряжение батареи (Вольт, например `13.7` или `2.27` на банку)
-* `TT.T` — Температура внутри корпуса (°C, например `30.8`)
-* `b7b6b5b4b3b2b1b0` — 8 двоичных флагов статуса:
-  - **b7 (`0x80`)**: `1` = Сбой сети 220V (`AC Fail`), питание от батареи; `0` = Сеть в норме.
-  - **b6 (`0x40`)**: `1` = Разряд батареи (`Battery Low`).
-  - **b5 (`0x20`)**: `1` = Активен стабилизатор AVR (Boost/Buck или Bypass).
-  - **b4 (`0x10`)**: `1` = Авария / отказ ИБП (`UPS Failed`).
-  - **b3 (`0x08`)**: Тип топологии (`1` = Standby/Offline, `0` = Online).
-  - **b2 (`0x04`)**: `1` = Идёт самотестирование батареи (`Test in progress`).
-  - **b1 (`0x02`)**: `1` = Активно запланированное выключение (`Shutdown active`).
-  - **b0 (`0x01`)**: `1` = Звуковой сигнал бипера **ВКЛЮЧЕН**; `0` = Режим тишины (**ВЫКЛЮЧЕН**).
+* `MMM.M`: Input AC voltage (V, e.g. `231.0`).
+* `NNN.N`: Fault reference voltage (V, e.g. `140.0`, ignored).
+* `PPP.P`: Output AC voltage (V, e.g. `232.0`).
+* `QQQ`: Power load percentage (0..100%, e.g. `010` = 10%).
+* `RR.R`: Input frequency (Hz, e.g. `49.0`).
+* `S.SS`: Battery voltage (V, e.g. `13.7` or `2.27` per cell).
+* `TT.T`: Internal temperature (°C, e.g. `30.8`).
+* `b7..b0`: Binary status bitmask:
+  - **b7 (`0x80`)**: `1` = Utility Fail (running on battery), `0` = AC Normal.
+  - **b6 (`0x40`)**: `1` = Battery Low.
+  - **b5 (`0x20`)**: `1` = AVR Boost/Buck active.
+  - **b4 (`0x10`)**: `1` = UPS Failed / Inverter error.
+  - **b3 (`0x08`)**: UPS Type (`1` = Standby/Offline, `0` = Online).
+  - **b2 (`0x04`)**: `1` = Battery self-test in progress.
+  - **b1 (`0x02`)**: `1` = Timed shutdown active.
+  - **b0 (`0x01`)**: `1` = Beeper **ON**; `0` = Silent mode (**OFF**).
 
-#### 2. Команда запроса паспорта устройства `I\r`
-Ответ начинается с символа `#` и содержит имя компании, модель и версию прошивки:
+#### Device Identity: `I\r`
+Returns the hardware identification string:
 ```text
 #Company_Name_ UPS_Model_ Version___\r
 ```
-* Байты 0..15: Название производителя (например, `SVC`)
-* Байты 16..26: Модель ИБП (например, `V-650-F-LCD` или `Richcomm-UPS`)
-* Байты 27..37: Версия прошивки (например, `V1.2`)
-
-#### 3. Команда номинальных характеристик `F\r`
-Ответ начинается с символа `#`:
-```text
-#MMM.M QQQ SS.SS FF.F\r
-```
-* `MMM.M` — Номинальное входное напряжение (например, `230.0` В)
-* `QQQ` — Номинальный ток нагрузки (Ампер)
-* `SS.SS` — Номинальное напряжение батареи (например, `12.00` В)
-* `FF.F` — Номинальная частота (например, `50.0` Гц)
-
-#### 4. Команды управления
-* **`Q\r`**: Переключение звуковой сигнализации (Mute / Unmute).
-* **`T\r`**: Запуск 10-секундного теста батареи под нагрузкой.
-* **`CT\r`**: Немедленная отмена самотестирования батареи.
-* **`S<n>\r`**: Задержка выключения ИБП через `<n>` минут.
+* Bytes 0..15: Manufacturer name (e.g. `SVC`).
+* Bytes 16..26: Model (e.g. `V-650-F-LCD` or `Richcomm UPS`).
+* Bytes 27..37: Firmware version (e.g. `V1.2`).
 
 ---
 
-### 3.5. Стабилизация управления звуком (бипером)
-В оригинальных программах управление звуком работало крайне нестабильно. Причина заключалась в том, что команда `Q\r` является **инвертирующей (Toggle)**. При слепой отправке команды:
-1. Если пользователь нажимал «Выключить звук», когда звук уже был выключен, ИБП наоборот его включал.
-2. Микроконтроллеру Richcomm требуется от 200 до 350 мс для фиксации состояния аудиотракта в EEPROM. Если следом сразу шёл опрос `Q1\r`, происходил конфликт на шине UART.
+### 4.5. Beeper Stabilization Algorithm
+The Megatec `Q\r` command is an **inverting toggle**, not an absolute state setter. In original drivers:
+1. Blindly toggling when the user intended "Off" would turn the sound **On** if it was already muted.
+2. The Richcomm microcontroller requires ~200–350 ms to latch its sound relay/EEPROM. Sending a subsequent `Q1\r` immediately resulted in UART packet collisions.
 
-#### Решение, реализованное в нашем драйвере (`set_beeper`):
-1. **Предварительная проверка**: перед отправкой команды считывается текущее состояние бита `b0` из ответа `Q1\r`.
-2. Если состояние уже соответствует желаемому (например, звук уже выключен) — команда `Q\r` **не отправляется вовсе**.
-3. Если состояние отличается: очищается буфер UART, отправляется `Q\r` и выдерживается аппаратная пауза **350 мс**.
-4. Запрашивается повторный `Q1\r` и проверяется, сменился ли бит `b0`.
-5. Если микроконтроллер был занят — алгоритм повторяет процедуру до 3 раз.
-6. Все вызовы защищены мьютексом `_cmd_lock`, исключая коллизии с фоновым опросом координатора.
-
----
-
-### 3.6. Резервный бинарный BCD-протокол
-Некоторые редкие ревизии контроллеров Richcomm поддерживают бинарный режим обмена:
-* Команда `1`: `[0x01, 0, 0, 0]` &rarr; 6-байтовый ответ с BCD-кодированием входного напряжения и статуса.
-* Команда `2`: `[0x02, 0, 0, 0]` &rarr; BCD-кодирование выходного напряжения, частоты и нагрузки.
-* Команда `3`: `[0x03, 0, 0, 0]` &rarr; BCD-кодирование напряжения АКБ и температуры.
-* Команда `0x11`: `[0x11, minutes, 0, 0]` &rarr; выключение ИБП.
-
-Наш драйвер автоматически определяет доступность текстового режима Megatec и при необходимости переключается на бинарный протокол.
+**Our stabilized implementation (`set_beeper`)**:
+1. Checks the current sound bit `b0` via `Q1\r`.
+2. If the current state already equals the desired target, **no command is sent**.
+3. If different: clears the UART buffer, sends `Q\r`, and pauses **350 ms**.
+4. Queries `Q1\r` to verify that bit `b0` has successfully changed.
+5. Retries up to 3 times with serialized mutex protection (`_cmd_lock`).
 
 ---
 
-## 4. Как работал оригинальный драйвер и почему он сломался
+### 4.6. Binary BCD Fallback Protocol
+For select firmware revisions that use raw binary reports instead of ASCII text:
+* Report 1: BCD-encoded input voltage and status byte.
+* Report 2: BCD-encoded output voltage, line frequency, and power load.
+* Report 3: BCD-encoded battery voltage and temperature.
+* Report `0x11`: Timed shutdown.
 
-### 4.1. Исторический контекст
-Оригинальный пакет ПО состоял из 4 бинарных файлов:
-* `ups_monitor` — консольный демон мониторинга, опрашивающий порт и вызывающий скрипты выключения.
-* `ups_status` — консольная утилита отображения таблицы статуса.
-* `ups_manager` — графическая панель (GUI на X11 / GTK+ 1.2).
-* `ups_config` — утилита настройки задержек выключения.
-
-Все они были собраны компилятором **GCC 3.2.2** на базе дистрибутива **Red Hat Linux 8.0/9.0** под динамическую библиотеку **glibc 2.3.2 (i386)**.
-
-#### Почему они не работают сегодня:
-1. **Разрядность 64 бит**: на современных 64-битных Linux-системах ядро сообщает `Exec format error` или `No such file or directory` (отсутствует 32-битный загрузчик `/lib/ld-linux.so.2`).
-2. **Права и devtmpfs**: оригинальный демон при запуске пытался создать файл `/dev/usb/hiddev0` через `mknod(..., S_IFCHR | 0666, makedev(180, 96))`. В современных дистрибутивах и Docker-контейнерах с `read-only /dev` это завершалось падением.
-3. **Блокирующий опрос COM-порта**: оригинальный код использовал `sleep(1)` вместо нормального `select()`/`poll()`, что приводило к зависаниям процесса при обрыве связи.
+The driver automatically falls back to binary parsing if Megatec ASCII responses are absent.
 
 ---
 
-### 4.2. Архитектура межпроцессного взаимодействия (SysV IPC)
-Оригинальный демон `ups_monitor` связывался с утилитами `ups_status` и `ups_manager` через разделяемую память стандарта System V:
-* Ключ IPC: `0x1B56` (число `7000` в десятичной системе).
-* Размер сегмента: **224 байта** (структура `struct UPS_DATA_Status`).
-* Семафор: один бинарный семафор с тем же ключом `0x1B56`. Блокировка выполнялась операцией `SEM_UNDO` (ожидание нуля и захват единицей).
+## 5. Legacy Driver Analysis & Historical Bugs
 
-```
-   [ ups_monitor ] (Демон мониторинга)
-          │  пишет каждые 1 сек
-          ▼
-   ┌───────────────────────────────────────────┐
-   │  SysV Shared Memory (Ключ 0x1B56, 224 Б)  │
-   │  структура: UPS_DATA_Status               │
-   │  • Heartbeat (счётчик циклов)             │
-   │  • cMesgTxt[120] (команды "shutdown")     │
-   │  • Показания напряжений, АКБ, нагрузки    │
-   │  • Байт аварийного статуса                │
-   └───────────────────────────────────────────┘
-          ▲                   ▲
-          │  читает           │  читает / шлет nSet=1
-   [ ups_status ]      [ ups_manager (GUI) ]
-```
+### 5.1. Historical Context
+The vendor utilities (`ups_monitor`, `ups_status`, `ups_manager`, `ups_config`) were compiled with **GCC 3.2.2** on **Red Hat Linux 8.0/9.0** around 2002–2003 against **glibc 2.3.2 (i386)**. Modern 64-bit kernels and distributions lack 32-bit glibc libraries by default and employ stricter permissions on `/dev/usb/hiddev*`.
 
----
+### 5.2. SysV IPC Shared Memory (Key `0x1B56`)
+Inter-process communication between `ups_monitor` and GUI viewers used a 224-byte System V shared memory segment:
+* Key: `0x1B56` (decimal `7000`).
+* Semaphore: binary mutex using `SEM_UNDO`.
+* Layout: `struct UPS_DATA_Status` (224 bytes, little-endian) containing cycle heartbeat, inbox commands (`cMesgTxt`), telemetry floats, and warning status flags.
 
-### 4.3. Формат бинарной конфигурации `TimeCfg.conf`
-Настройки задержек выключения сохранялись не в текстовом виде, а в виде бинарного дампа памяти структуры Си объёмом ровно **52 байта**:
+### 5.3. Binary Configuration File `TimeCfg.conf`
+Stored as a 52-byte binary struct (`struct TheCfgData`):
+* Magic: `0x55AA0335`
+* Delays: `ac_fail_delay`, `battery_low_delay`, `ups_failed_delay` (-1 = disabled).
+* `warning_interval`, `turn_off_ups`, `turn_off_ups_time`, `com_port`, `comm_mode`.
 
-```text
-Смещение  Тип         Поле               Описание
-0x00      int32_t     head               Сигнатура (Magic): 0x55AA0335
-0x04      int32_t     ac_fail_delay      Задержка при сбое сети (сек), -1 = отключено
-0x08      int32_t     battery_low_delay  Задержка при разряде АКБ (сек), -1 = отключено
-0x0C      int32_t     ups_failed_delay   Задержка при аварии ИБП (сек), -1 = отключено
-0x10      int32_t     warning_interval   Интервал повтора оповещений (сек)
-0x14      char[16]    ups_ip             IP-адрес SNMP (в коде не используется)
-0x24      int32_t     turn_off_ups       1 = выключить инвертор ИБП после завершения ОС
-0x28      int32_t     turn_off_ups_time  Количество минут для команды S<n>
-0x2C      int32_t     com_port           Номер порта (1 = /dev/ttyS0)
-0x30      int32_t     comm_mode          Режим: 0=COM, 1=USB-HID Text, 2=USB-HID Binary
-```
+### 5.4. Dissected Bugs in the Original C Code
+1. **Status Bit Corruption**: In `Process_UPS_Cancel_warging`, the original code applied inverted bitmasks (`& 0xFE`, `& 0xFD`), inadvertently clearing unrelated status bits (such as the beeper and test flags) whenever mains AC power restored.
+2. **Wild Memory Execution**: In `Shutdown()`, re-entry triggered `system(buffer)` on an uninitialized stack buffer.
+3. **Swapped Function Names**: In the original source, `Quary_F` transmitted `I\r`, while `Quary_I` transmitted `F\r`.
 
 ---
 
-### 4.4. Критические ошибки оригинального кода
-При исследовании машинного кода в дизассемблере IDA Pro / Ghidra были обнаружены грубые дефекты оригинальной реализации:
+## 6. Deep Dive: The Recompiled Daemon (`ups_monitor.py`)
 
-1. **Баг маскирования в `Process_UPS_Cancel_warging`**:  
-   При отмене предупреждений код разработчиков содержал опечатки в битовых масках (`& 0xFE`, `& 0xFD`, `& 0xFB`). В результате при возвращении сети 220V демон ошибочно сбрасывал флаги состояния бипера и селф-теста.
-2. **Неинициализированный буфер в функции `Shutdown()`**:  
-   При повторном вызове `Shutdown()` строка команды для `system()` формировалась на стеке без терминатора `\0`, приводя к выполнению случайного мусора в шелле.
-3. **Перепутанные имена функций**:  
-   Функция с экспортируемым именем `Quary_F` внутри бинарника отправляла строку `"I\r"`, а функция `Quary_I` отправляла `"F\r"`.
-4. **Утечки файловых дескрипторов**:  
-   При ошибках связи дескриптор порта открывался повторно без вызова `close(fd)`.
+Located in `recompiled/ups_monitor.py`, this file is a 100% faithful, bit-for-bit compatible reimplementation of the disassembled ELF32 binary.
 
----
+### 6.1. 100% Binary & Memory Compatibility
+* **SysV SHM via `ctypes`**: Communicates with original legacy binaries (`ups_status`, `ups_manager`) via key `0x1B56` without recompiling them.
+* **`TimeCfg.conf` Parser**: Reads and writes the 52-byte binary configuration with strict magic validation.
+* **Logging**: Recreates `PowerEventYYYYMM.log` and notification scripts (`./SendMSG.sh`, `./shutdown.sh`).
 
-## 5. Подробный разбор файла рекомпиляции: `ups_monitor.py`
+### 6.2. Class Architecture & Transports
+* `SerialLink`: Raw termios 8N1 serial driver.
+* `HiddevDevice` & `HidTextLink`: Framing `0xA0` over hiddev ioctls.
+* `Monitor`: Finite state machine replicating `Start()`.
 
-Файл **`recompiled/ups_monitor.py`** — это высокоточная реконструкция оригинального бинарника на чистом Python 3 без единого внешнего pip-пакета.
-
-### 5.1. Назначение и совместимость
-Скрипт полностью воспроизводит логику оригинального демона, но работает на любых 64-битных дистрибутивах Linux. Он способен:
-* Создавать сегмент разделяемой памяти SysV `0x1B56` и семафор, делая вывод доступным для старых утилит.
-* Читать и записывать оригинальный бинарный файл `TimeCfg.conf` с валидацией сигнатуры `0x55AA0335`.
-* Читать имя процесса из `pm.conf` (`ProgramName:ups_manager`).
-* Вести журнал аварийных событий в файлы вида `PowerEventГГГГММ.log`.
-* Вызывать пользовательские скрипты `./SendMSG.sh "<текст>"` и `./shutdown.sh "<текст>"`.
-
-### 5.2. Архитектура классов и модулей `ups_monitor.py`
-
-```text
-┌────────────────────────────────────────────────────────────────────────┐
-│                          ups_monitor.py                                │
-├────────────────────────────────┬───────────────────────────────────────┤
-│         Транспорты             │          Конечный автомат             │
-│  • SerialLink (termios 8N1)    │  • Monitor                            │
-│  • HiddevDevice (ioctl USB)    │    - on_warning() / on_cancel()       │
-│  • HidTextLink (Framed 0xA0)   │    - process_countdown()              │
-│  • HidBinaryLink (BCD reports) │    - do_shutdown()                    │
-├────────────────────────────────┼───────────────────────────────────────┤
-│       Структуры и IPC          │         Инструменты и тесты           │
-│  • Config (TimeCfg.conf 52 B)  │  • MegatecSimulator (PTY эмулятор)    │
-│  • UpsData (UPS_DATA 224 B)    │  • SelfTest (9 юнит-тестов)           │
-│  • SysVShm (ctypes libc IPC)   │  • CLI (run, stop, simulate, decode)  │
-└────────────────────────────────┴───────────────────────────────────────┘
-```
-
-1. **Слой структур данных**:
-   - `Config`: сериализация и десериализация 52-байтового блока через `struct.Struct("<5i16s4i")`.
-   - `UpsData`: сериализация 224-байтового блока через `struct.Struct("<i120si6fi4f18s16s18s")`.
-   - `SysVShm`: прямые вызовы `shmget`, `shmat`, `shmdt`, `semget`, `semop` через модуль `ctypes` стандартной библиотеки Python (без сторонних расширений).
-2. **Слой протоколов и транспортов**:
-   - `SerialLink`: низкоуровневое управление последовательным портом через вызовы `termios.tcsetattr` и неблокирующий `select()`.
-   - `HiddevDevice`: реализация ioctl-интерфейса hiddev ядра Linux с потоком `USBReadThread`.
-   - `HidTextLink`: реализация протокола кадрирования Richcomm FRAMED `0xA0`.
-   - `HidBinaryLink`: опрос бинарных BCD-отчётов.
-3. **Конечный автомат `Monitor`**:
-   - Полная реализация машины состояний функции `Start()` оригинального демона.
-   - Метод `step()`: один цикл опроса, обработка сбоев, таймеров и отправки сигналов.
-   - Метод `process_countdown()`: одновременный контроль 3 независимых счётчиков (сбой сети, батарея, инвертор) с выбором наименьшего для вывода в оповещения.
-
-### 5.3. Встроенный эмулятор `MegatecSimulator` на базе PTY
-Для отладки без реального оборудования в скрипт встроен класс `MegatecSimulator`. Он открывает пару псевдотерминалов через `pty.openpty()`, настраивает ведомый узел (`slave`) в сырой режим и отвечает на команды `Q1`, `I`, `F`, эмулируя переход на батарею, разряд и восстановление питания.
-
-Запуск симуляции демона:
+### 6.3. Virtual PTY UPS Simulator (`MegatecSimulator`)
+Includes an in-memory virtual UPS using Linux pseudo-terminals (`pty`):
 ```bash
 python3 recompiled/ups_monitor.py simulate
 ```
+Emulates a 25-second power outage, countdown, and AC recovery for testing without physical hardware.
 
-### 5.4. Набор юнит-тестов (`selftest`)
-Команда `selftest` запускает 9 автоматических тестов:
-1. `test_parse_q1`: проверка разбора строки Megatec Q1 и маски статуса.
-2. `test_parse_identity_rating`: проверка разбора ответов `I\r` и `F\r`.
-3. `test_config_roundtrip`: проверка упаковки/распаковки 52 байт `TimeCfg.conf`.
-4. `test_shm_struct`: проверка бинарного смещения полей в 224 байтах `UPS_DATA_Status`.
-5. `test_bcd`: тестирование конвертации BCD-чисел.
-6. `test_sysv_shm`: проверка реальной записи и чтения через `ctypes` в память SysV.
-7. `test_full_ac_fail_shutdown`: полный цикл сквозного тестирования с симулятором ИБП (сбой сети &rarr; отсчёт &rarr; оповещение &rarr; вызов `shutdown.sh` &rarr; отправка `S02`).
-8. `test_cancel`: отмена аварии при восстановлении сети 220V.
-9. `test_no_response`: отработка 5 тайм-аутов подряд до статуса `"No Response"`.
-
-Запуск тестов:
+### 6.4. Automated Test Suite (`selftest`)
+Executes 9 automated unit tests verifying struct packing, BCD conversions, Megatec parsers, SHM memory writes, and shutdown workflows:
 ```bash
 python3 recompiled/ups_monitor.py selftest
 ```
 
 ---
 
-## 6. Руководство по директориям
+## 7. Directory Guides
 
-### 6.1. Папка `standalone/`
-Включает файл **`upstest.py`** — единый инструмент для повседневной эксплуатации в Linux:
-* Вызов без параметров: опрос ИБП и вывод удобной ASCII-таблицы параметров.
-* Запрос версии прошивки и модели из чипа:
-  ```bash
-  python3 standalone/upstest.py --info
-  ```
-* Управление звуком с подтверждением:
-  ```bash
-  python3 standalone/upstest.py --set-beeper off   # Тихий режим
-  python3 standalone/upstest.py --set-beeper on    # Включить пищалку
-  ```
-* Запуск 10-секундного теста батареи:
-  ```bash
-  python3 standalone/upstest.py --selftest
-  ```
-* Вывод в JSON:
-  ```bash
-  python3 standalone/upstest.py --json
-  ```
-* Запуск демона в фоне:
-  ```bash
-  python3 standalone/upstest.py --daemon
-  ```
+### 7.1. `standalone/` Directory
+The `standalone/upstest.py` utility is the recommended CLI tool for servers and Docker containers:
+* **One-shot status poll**: `python3 standalone/upstest.py`
+* **Query model and firmware**: `python3 standalone/upstest.py --info`
+* **Control beeper**: `python3 standalone/upstest.py --set-beeper off`
+* **Battery self-test (10s)**: `python3 standalone/upstest.py --selftest`
+* **JSON export**: `python3 standalone/upstest.py --json`
+* **Background daemon**: `python3 standalone/upstest.py --daemon`
+
+### 7.2. Home Assistant Integration
+Located directly in `custom_components/svc_ups/`:
+* Ready for 1-click addition as a HACS Custom Repository.
+* Dynamically identifies manufacturer, model, and firmware from the hardware.
+* Entities: 9 numerical sensors, 5 binary sensors, 1 switch (Mute), 2 control buttons.
+
+### 7.3. `recompiled/` Directory
+Contains `ups_monitor.py` for environments requiring backward compatibility with legacy SysV SHM tools and `TimeCfg.conf`.
 
 ---
 
-### 6.2. Папка `ha/`
-Содержит интеграцию для **Home Assistant**, оформленную по всем стандартам сообщества для добавления в **HACS**:
-* **Добавление в HACS**:
-  1. Перейдите в HACS &rarr; Integrations &rarr; ⋮ (меню справа вверху) &rarr; **Custom repositories**.
-  2. В поле URL укажите ссылку на ваш репозиторий, категория: **Integration**.
-  3. Нажмите **Add**, найдите в списке **SVC / Richcomm UPS** и нажмите **Download**.
-  4. Перезапустите Home Assistant.
-* **Автоматическое определение модели и версии**:
-  Благодаря запросу команды `I\r`, карточка устройства в Home Assistant автоматически отобразит реальную модель и ревизию прошивки (например, `SVC V-650-F-LCD, firmware V1.2`).
-* **Сущности**:
-  - Сенсоры: Входное/выходное напряжение, заряд АКБ %, нагрузка %, частота, температура, статус сети, модель и версия прошивки.
-  - Бинарные сенсоры: Сеть 220V (Plug), Разряд батареи, AVR Boost/Buck, Авария инвертора, Самотестирование активно.
-  - Переключатель: Звуковая сигнализация (Бипер) с защитой от рассинхронизации.
-  - Кнопки: Запуск теста батареи (10 сек) и экстренная отмена теста.
-* **Для удалённых серверов (Synology / Proxmox)**:
-  В папке присутствует `docker-compose.yml` и `mqtt_bridge.py` для мгновенной трансляции всех данных в Home Assistant через MQTT Auto-Discovery без установки компонентов в ядро HA.
-
----
-
-### 6.3. Папка `recompiled/`
-Содержит файл **`ups_monitor.py`** — эталонную замену оригинального бинарника для серверов, где требуется обратная совместимость со старыми скриптами или графическими оболочками, использующими SysV Shared Memory.
-
----
-
-## 7. Лицензия
-Данный проект распространяется под свободной лицензией **MIT**. Разрешено свободное использование, модификация и интеграция в любые коммерческие и некоммерческие проекты.
+## 8. License
+This project is open-source under the **MIT License**.

@@ -1,141 +1,135 @@
-# Реконструкция демона `ups_monitor` (Reverse-Engineered Python Reimplementation)
+# Reconstructed `ups_monitor` Daemon (Reverse-Engineered Python Reimplementation)
 
-В данной директории находится файл **`ups_monitor.py`** — полная, побайтово и структурно совместимая реконструкция оригинального демона `ups_monitor`, восстановленная путём статического и динамического дизассемблирования (реверс-инжиниринга) оригинального 32-битного бинарника ELF.
+**Languages**: [English](README.md) | [Русский](README.ru.md)
 
----
-
-## 1. История и контекст оригинала
-
-Оригинальный бинарник `ups_monitor` поставлялся производителем Richcomm Technologies в составе дистрибутива ПО для Linux:
-* **Формат исполняемого файла**: ELF 32-bit LSB executable, Intel 80386.
-* **Тулчейн компиляции**: GCC 3.2.2 (Red Hat Linux release 8.0/9.0, 2002–2003 год).
-* **Системные библиотеки**: GNU C Library (glibc) версии 2.3.2.
-* **Причина неработоспособности на современных системах**:
-  1. В современных 64-битных дистрибутивах (Debian 11/12, Ubuntu 20.04/22.04/24.04, Alpine, RHEL/Rocky 9) по умолчанию отсутствуют 32-битные разделяемые библиотеки (`libc.so.6`, `ld-linux.so.2`).
-  2. Устаревший способ обращения к `/dev/usb/hiddev0`: бинарник пытался вызывать `mknod` со статическими правами или зависал при отсутствии прав доступа.
-  3. Несовместимость структуры семафоров и shared memory при взаимодействии с современными 64-битными процессами.
-  4. Грубые баги в коде оригинального ПО на языке Си, приводящие к сегфолтам (SIGSEGV) и повреждению памяти.
-
-Файл **`ups_monitor.py`** восстанавливает всю функциональность оригинала 1 в 1, работая на чистом Python 3.8+ без компиляции и внешних библиотек.
+This directory contains **`ups_monitor.py`** — an accurate, structure- and memory-compatible Python reimplementation of the legacy `ups_monitor` daemon, reverse-engineered from the original 32-bit ELF executable.
 
 ---
 
-## 2. Архитектура и алгоритмы оригинального демона
+## 1. Background & Legacy Context
 
-### 2.1. Главный цикл `Start()`
-Демон реализован в виде конечного автомата (FSM):
-1. **Инициализация интерфейса связи (`InitializeCom` / `UsbOpen`)**:
-   - COM-порт: `open(O_RDWR | O_NOCTTY | O_NONBLOCK)`, настройка `termios` в абсолютно «сырой» режим (8N1, скорость 2400 бод, отключены все флаги управления потоком, эхо и спецсимволы).
-   - USB-HID: перебор портов `/dev/usb/hiddev0`..`/dev/usb/hiddev15`, проверка через ioctl `HIDIOCGDEVINFO` на соответствие VID `0x0925` и PID `0x1234`. При совпадении вызывается `SetBaud(2400)` и запускается отдельный поток `USBReadThread`.
-2. **Опрос разделяемой памяти (IPC SysV)**:
-   - Проверка входящих команд от GUI-менеджера: если в поле `cMesgTxt` обнаружена подстрока `"shutdown"`, демон завершает работу.
-   - Если флаг `nSet == 1`, демон перечитывает конфигурационный файл `TimeCfg.conf` и, если изменился номер порта или режим связи, перезапускает транспорт.
-3. **Опрос телеметрии ИБП**:
-   - Каждые 10 циклов запрашиваются паспортные данные (`I\r`) и номинальные характеристики (`F\r`).
-   - Каждый цикл запрашивается оперативный статус (`Q1\r`).
-   - При 5 неудачных запросах подряд (`m_RetryCount >= 5`) флаг готовности `m_UpsReady` сбрасывается в `0`, обнуляются показания в памяти и вызывается оповещение `"UPS Adapter No Response, please stop the process!!"`.
-4. **Обработка изменений статуса (`handle_status_change`)**:
-   - Вычисляется побитовый XOR между старым и новым статусом (`UPS_status_old ^ UPS_status`).
-   - Для каждого изменившегося бита вызывается либо `on_warning` (переход 0 &rarr; 1), либо `on_cancel` (переход 1 &rarr; 0).
-5. **Обратный отсчёт аварий (`ProcessCountDown`)**:
-   - Если активен сбой сети, разряд батареи или авария инвертора, запускаются таймеры.
-   - Каждые `WarningInterval` секунд отсылается оповещение через `./SendMSG.sh`.
-   - По истечении таймера вызывается аварийное завершение `./shutdown.sh` и (если задано) команда выключения ИБП `S<n>\r`.
+The original `ups_monitor` binary was provided by Richcomm Technologies as part of their Linux management suite:
+* **Binary Format**: ELF 32-bit LSB executable, Intel 80386.
+* **Compiler Toolchain**: GCC 3.2.2 (Red Hat Linux release 8.0/9.0, circa 2002–2003).
+* **C Library**: GNU C Library (glibc) version 2.3.2.
+* **Why it fails on modern systems**:
+  1. Contemporary 64-bit distributions lack 32-bit runtime loaders (`/lib/ld-linux.so.2`) by default.
+  2. Deprecated `/dev/usb/hiddev0` device handling (`mknod` with fixed permissions fails in Docker / read-only `/dev`).
+  3. Memory layout and semaphore discrepancies when communicating with modern 64-bit user processes.
+  4. Memory corruption bugs in the original C code causing segmentation faults (`SIGSEGV`).
+
+`ups_monitor.py` reconstructs 100% of the legacy behavior in pure Python 3.8+ without compilation or third-party packages.
 
 ---
 
-## 3. Структуры данных и протоколы
+## 2. Core Architecture & Algorithms
 
-### 3.1. Бинарный конфиг `TimeCfg.conf` (52 байта)
-Файл хранится в каталоге программы и имеет следующий бинарный формат (структура `TheCfgData`, little-endian):
+### 2.1. The Main Polling Loop: `Start()`
+The daemon operates as a finite state machine (FSM):
+1. **Link Initialization (`InitializeCom` / `UsbOpen`)**:
+   - Serial mode: `open(O_RDWR | O_NOCTTY | O_NONBLOCK)` with raw `termios` configuration (2400 baud, 8N1, no flow control).
+   - USB mode: Scans `/dev/usb/hiddev0` through `/dev/usb/hiddev15` checking VID `0x0925` and PID `0x1234` via `HIDIOCGDEVINFO`. Upon match, calls `SetBaud(2400)` and spawns the background worker `USBReadThread`.
+2. **IPC Polling (SysV Shared Memory)**:
+   - Checks inbox commands from GUI utilities: if `cMesgTxt` contains `"shutdown"`, the daemon exits cleanly.
+   - If `nSet == 1`, re-reads `TimeCfg.conf` and reopens transport links if communication parameters changed.
+3. **Telemetry Polling**:
+   - Queries `Q1\r` every cycle (1 second).
+   - Queries `I\r` (Identity) and `F\r` (Ratings) every 10 cycles.
+   - After 5 consecutive query failures (`m_RetryCount >= 5`), resets ready flag, clears telemetry, and broadcasts `"UPS Adapter No Response, please stop the process!!"`.
+4. **Status Change Handling (`handle_status_change`)**:
+   - Computes bitwise XOR: `status_old ^ status_new`.
+   - Dispatches `on_warning` on rising edges ($0 \rightarrow 1$) and `on_cancel` on falling edges ($1 \rightarrow 0$) for each bit.
+5. **Countdown & Orderly Shutdown (`ProcessCountDown`)**:
+   - Independent countdown timers for mains utility failure, battery low, and inverter fault.
+   - Broadcasts warnings every `WarningInterval` seconds via `./SendMSG.sh`.
+   - Upon timer expiry, triggers `./shutdown.sh` and sends inverter shutdown command `S<n>\r`.
 
+---
+
+## 3. Data Structures & Protocols
+
+### 3.1. Binary Configuration: `TimeCfg.conf` (52 Bytes)
+Little-endian struct layout (`struct TheCfgData`):
 ```c
 struct TheCfgData {
     int   head;                 // 0x00: Magic number 0x55AA0335
-    int   ac_fail_delay;        // 0x04: Секунды до выключения при сбое сети (-1 = отключено)
-    int   battery_low_delay;    // 0x08: Секунды при разряде АКБ (-1 = отключено)
-    int   ups_failed_delay;     // 0x0C: Секунды при аварии ИБП (-1 = отключено)
-    int   warning_interval;     // 0x10: Интервал повтора сообщений (сек)
-    char  ups_ip[16];           // 0x14: IP-адрес SNMP-адаптера (null-terminated)
-    int   turn_off_ups;         // 0x24: 1 = выключить инвертор ИБП после shutdown
-    int   turn_off_ups_time;    // 0x28: Минуты задержки для команды S<n>
-    int   com_port;             // 0x2C: Номер COM-порта (1 -> /dev/ttyS0)
+    int   ac_fail_delay;        // 0x04: Seconds before shutdown on AC fail (-1 = disabled)
+    int   battery_low_delay;    // 0x08: Seconds before shutdown on Low Battery (-1 = disabled)
+    int   ups_failed_delay;     // 0x0C: Seconds before shutdown on UPS Fail (-1 = disabled)
+    int   warning_interval;     // 0x10: Warning repeat interval (seconds)
+    char  ups_ip[16];           // 0x14: SNMP IP string (unused in C logic)
+    int   turn_off_ups;         // 0x24: 1 = send S<n> to UPS after system shutdown
+    int   turn_off_ups_time;    // 0x28: Minutes delay for S<n> command
+    int   com_port;             // 0x2C: COM port index (1 -> /dev/ttyS0)
     int   comm_mode;            // 0x30: 0=COM, 1=USB-HID Text, 2=USB-HID Binary
-}; // Итого: 52 байта
+}; // Exactly 52 bytes
 ```
 
-### 3.2. SysV Shared Memory `UPS_DATA_Status` (224 байта, ключ `0x1B56`)
-Используется для связи демона с GUI-утилитами (`ups_status`, `ups_manager`). Доступ синхронизируется через SysV-семафор с ключом `0x1B56`:
-
+### 3.2. SysV Shared Memory: `UPS_DATA_Status` (224 Bytes, Key `0x1B56`)
+Synchronized via binary semaphore `0x1B56`:
 ```c
 struct UPS_DATA_Status {
-    int   nMesgLen;             // 0x00: Heartbeat (инкрементный счётчик циклов)
-    char  cMesgTxt[120];        // 0x04: Почтовый ящик команд ("shutdown", "start")
-    int   nSet;                 // 0x7C: Флаг запроса на перечитывание TimeCfg.conf
-    float fAcInValue;           // 0x80: Входное напряжение (Вольт)
-    float fAcOutValue;          // 0x84: Выходное напряжение (Вольт)
-    float fAcFreValue;          // 0x88: Частота сети (Гц)
-    float fDcValue;             // 0x8C: Напряжение батареи (Вольт)
-    float fUpsTemp;             // 0x90: Температура инвертора (°C)
-    float fLoad;                // 0x94: Нагрузка (%)
-    int   nWarnStatus;          // 0x98: Байт статуса (биты b7..b0 ответа Q1)
-    float fRate_AcIn;           // 0x9C: Номинальное входное напряжение (из команды F)
-    float fRate_DcValue;        // 0xA0: Номинальное напряжение батареи
-    float fRate_AcFre;          // 0xA4: Номинальная частота сети
-    float fRate_Load;           // 0xA8: Номинальный ток нагрузки
-    char  cCompanyName[18];     // 0xAC: Производитель (из команды I)
-    char  cUpsModel[16];        // 0xBE: Модель ИБП
-    char  cVersion[18];         // 0xCE: Версия прошивки
-}; // Итого: 224 байта
+    int   nMesgLen;             // 0x00: Heartbeat loop counter
+    char  cMesgTxt[120];        // 0x04: Command mailbox ("shutdown", "start")
+    int   nSet;                 // 0x7C: Flag to reload TimeCfg.conf
+    float fAcInValue;           // 0x80: Input Voltage (V)
+    float fAcOutValue;          // 0x84: Output Voltage (V)
+    float fAcFreValue;          // 0x88: Line Frequency (Hz)
+    float fDcValue;             // 0x8C: Battery Voltage (V)
+    float fUpsTemp;             // 0x90: Internal Temperature (°C)
+    float fLoad;                // 0x94: Power Load (%)
+    int   nWarnStatus;          // 0x98: Status byte (Megatec Q1 bits b7..b0)
+    float fRate_AcIn;           // 0x9C: Nominal Input Voltage (from F command)
+    float fRate_DcValue;        // 0xA0: Nominal Battery Voltage
+    float fRate_AcFre;          // 0xA4: Nominal Line Frequency
+    float fRate_Load;           // 0xA8: Nominal Current Rating
+    char  cCompanyName[18];     // 0xAC: Manufacturer string (from I command)
+    char  cUpsModel[16];        // 0xBE: UPS Model string
+    char  cVersion[18];         // 0xCE: Firmware version string
+}; // Exactly 224 bytes
 ```
 
 ---
 
-## 4. Обнаруженные и исправленные баги оригинального бинарника
+## 4. Dissected Bugs in the Original Binary
 
-При дизассемблировании оригинального исполняемого файла были выявлены критические ошибки проектирования, которые в Python-реконструкции `ups_monitor.py` были исправлены:
+Reverse-engineering the disassembled ELF32 code revealed several critical bugs in the original implementation:
 
-| Исходный баг в C-коде | Проявление в оригинале | Исправление в `ups_monitor.py` |
-|-----------------------|------------------------|--------------------------------|
-| **Опечатка в именах функций** | Функция `Quary_F()` посылает команду `I\r`, а `Quary_I()` посылает `F\r`. | Логика сохранена для 100% совместимости, но переменные названы корректно. |
-| **Повреждение маски статуса** в `Process_UPS_Cancel_warging` | При снятии аварий код оригинала применял маски `& 0xFE`, `& 0xFD`, `& 0xFB`, затирая несвязанные младшие биты статуса. | Устранено: сбрасывается строго тот бит, авария которого отменилась. |
-| **Вызов `system()` с неинициализированной памятью** | В функции `Shutdown()` при повторном входе вызывался `system(buffer)`, где `buffer` содержал случайный мусор из стека. | Добавлен флаг защиты от повторного входа `shutdown_flag`. |
-| **Чтение неполного `TimeCfg.conf`** | При размере файла < 52 байт оригинальный демон читал неинициализированный буфер и работал с битыми задержками. | Добавлена строгая проверка длины буфера и заголовка `CFG_MAGIC`. |
-| **Засорение UART-буфера** | Оригинал не очищал входную очередь порта перед отправкой запроса, из-за чего ответы склеивались. | Добавлен сброс очереди `tcflush(TCIFLUSH)` перед каждой транзакцией. |
+| Original C Bug | Real-World Failure | Fix in `ups_monitor.py` |
+|---|---|---|
+| **Mask corruption in `Process_UPS_Cancel_warging`** | Applied bitwise AND masks `& 0xFE`, `& 0xFD`, `& 0xFB`, inadvertently clearing unrelated status bits (e.g. beeper and test flags). | Fixed: strictly modifies only the target warning bit. |
+| **Wild pointer in `Shutdown()`** | Re-entry called `system(buffer)` where `buffer` contained uninitialized stack garbage. | Added `shutdown_flag` re-entrancy guard. |
+| **Swapped function names** | Function `Quary_F` actually sent `I\r`, while `Quary_I` sent `F\r`. | Logic kept compatible, but properly named in Python. |
+| **Unchecked short reads of `TimeCfg.conf`** | Reading files < 52 bytes parsed garbage stack data. | Enforces exact 52-byte length and `0x55AA0335` magic check. |
+| **Serial buffer buildup** | Lacked input buffer flushing before sending commands. | Adds `tcflush(TCIFLUSH)` before every serial query. |
 
 ---
 
-## 5. Запуск и встроенные инструменты `ups_monitor.py`
+## 5. Usage & Tools
 
-`ups_monitor.py` содержит встроенный симулятор виртуального ИБП на базе псевдотерминала (`pty`), позволяющий полностью протестировать работу демона без подключения физического железа.
+### Built-in Virtual PTY Simulator
+Test the complete daemon without physical hardware using Linux pseudo-terminals (`pty`):
+```bash
+python3 recompiled/ups_monitor.py simulate
+```
+Simulates a power outage, 25-second battery countdown, alert generation, and AC recovery.
 
-### Автономные тесты (Unit Tests)
-Запуск набора юнит-тестов (проверка структур, BCD, разбора Q1/I/F, SHM и эмуляции сбоя сети):
+### Automated Unit Test Suite
+Executes 9 automated unit tests verifying struct packing, BCD conversions, Megatec parsers, SHM memory writes, and shutdown workflows:
 ```bash
 python3 recompiled/ups_monitor.py selftest
 ```
 
-### Симуляция работы без железа
-Запуск виртуального ИБП, имитирующего отключение 220V на 25 секунд и обратный отсчёт:
-```bash
-python3 recompiled/ups_monitor.py simulate
-```
-
-### Запуск демона на физическом порту
+### Run Daemon in Production
 ```bash
 python3 recompiled/ups_monitor.py run --device /dev/ttyS0 --shm --debug
 ```
 
-### Разбор сырой строки ответа Megatec Q1
+### Inspect and Edit `TimeCfg.conf`
 ```bash
-python3 recompiled/ups_monitor.py decode "(230.0 140.0 230.0 020 50.0 2.27 25.0 00001001"
-```
-
-### Просмотр и редактирование `TimeCfg.conf`
-```bash
-# Просмотр текущих параметров:
+# Display configuration:
 python3 recompiled/ups_monitor.py config
 
-# Изменение задержки при сбое 220V на 120 секунд:
-python3 recompiled/ups_monitor.py config --ac-fail-delay 120 --write
+# Update AC fail shutdown delay to 180 seconds:
+python3 recompiled/ups_monitor.py config --ac-fail-delay 180 --write
 ```

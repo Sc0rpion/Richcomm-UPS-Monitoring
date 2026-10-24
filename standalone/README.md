@@ -1,48 +1,50 @@
 # Standalone CLI & Daemon: `upstest.py`
 
-Единый самодостаточный Python-драйвер и консольная утилита управления для ИБП **SVC / Richcomm Technologies** (USB VID `0x0925`, PID `0x1234`).
+**Languages**: [English](README.md) | [Русский](README.ru.md)
 
-Не требует никаких внешних библиотек (работает исключительно на стандартной библиотеке Python 3.8+) и полностью заменяет устаревший 32-битный стек утилит `ups_monitor`, `ups_status`, `ups_manager`, `ups_config`.
+A self-contained, zero-dependency Python 3 driver and CLI monitoring daemon for **SVC / Richcomm Technologies** UPS units (USB VID `0x0925`, PID `0x1234`).
 
----
-
-## Возможности
-
-1. **Прямой драйвер USB-HID (`/dev/usb/hiddev*`)**:
-   - Автоматический поиск устройства среди `hiddev0`..`hiddev15` по дескриптору ядра.
-   - Автоматическое создание узла устройства (`mknod major 180, minor 96+i`) при работе в контейнерах Docker / LXC.
-   - Инициализация скорости UART 2400 бод PDU-пакетом `[0x80, 0xD0, 0x00, 0x00]`.
-   - Инкапсуляция команд в родной протокол кадрирования Richcomm FRAMED `0xA0` (`[0xA0 | len, d0, d1, d2]`).
-   - Фоновый поток чтения USB (`HIDIOCGUSAGE` / `HIDIOCGUCODE`) с разбором входных UART-кадров `0x80`.
-2. **Динамический паспорт ИБП (команда `I\r`)**:
-   - Запрос марки, модели и версии прошивки напрямую из микроконтроллера ИБП.
-3. **Стабилизированное управление звуком (бипер, команда `Q\r`)**:
-   - Верификация текущего состояния бита `b0` перед отправкой.
-   - Защита от дребезга и повторные попытки с выверенной паузой 350 мс.
-4. **Тестирование батареи под нагрузкой**:
-   - Запуск 10-секундного теста (`T\r`) с выводом графика просадки напряжения АКБ в реальном времени.
-   - Экстренная отмена тестирования (`CT\r`).
-5. **Совместимость с SysV Shared Memory (IPC ключ `0x1B56`)**:
-   - Может читать данные старого оригинального `ups_monitor` без конфликта за USB-порт.
-   - Может сам публиковать данные в SHM для работы старых графических интерфейсов.
-6. **Полноценный автономный демон мониторинга (`--daemon`)**:
-   - Отслеживание сбоев сети 220V, разряда аккумулятора и аварий.
-   - Обратный отсчёт до завершения работы с отправкой оповещений (`./SendMSG.sh`).
-   - Корректное выключение сервера (`./shutdown.sh`) и отправка команды отключения инвертора ИБП (`S<n>\r`).
-   - Экспорт текущей телеметрии в `/tmp/ups_status.json` (для Zabbix, Telegraf, Prometheus, Home Assistant).
+Works entirely using the Python standard library (Linux only, Python 3.8+) and provides a 100% modern replacement for the obsolete 32-bit `ups_monitor` / `ups_status` utility suite.
 
 ---
 
-## Быстрый старт
+## Key Features
 
-### Однократный опрос статуса
+1. **Direct USB-HID Driver (`/dev/usb/hiddev*`)**:
+   - Automatic hardware discovery across `/dev/usb/hiddev0..15`.
+   - Node auto-creation (`mknod major 180, minor 96+i`) for Docker / LXC containers.
+   - Baud rate initialization to 2400 bps via PDU `[0x80, 0xD0, 0x00, 0x00]`.
+   - Native Richcomm FRAMED `0xA0` packet encapsulation (`[0xA0 | len, d0, d1, d2]`).
+   - Background reader thread parsing incoming UART `0x80` frames.
+2. **Dynamic Hardware Identity (`I\r`)**:
+   - Queries manufacturer, model name, and firmware version directly from the UPS microcontroller.
+3. **Stabilized Beeper Control (`Q\r`)**:
+   - Reads bit `b0` before transmitting to prevent accidental toggling.
+   - Enforces a 350 ms settling delay and retries up to 3 times with state verification.
+4. **Battery Self-Test Under Load**:
+   - Triggers a 10-second battery test (`T\r`) with real-time terminal telemetry.
+   - Immediate cancellation with `CT\r`.
+5. **SysV Shared Memory Compatibility (Key `0x1B56`)**:
+   - Read mode: reads telemetry from an active legacy daemon without USB port contention.
+   - Server mode: publishes telemetry to SHM for legacy GUI tools.
+6. **Background Monitoring Daemon (`--daemon`)**:
+   - Monitors mains AC failure, battery low, and inverter fault conditions.
+   - Countdown to system shutdown with alerts via `./SendMSG.sh`.
+   - Orderly system shutdown (`./shutdown.sh`) and optional inverter power-off (`S<n>\r`).
+   - Live JSON telemetry export to `/tmp/ups_status.json` (for Zabbix, Telegraf, Prometheus).
+
+---
+
+## Quick Start
+
+### One-Shot Status Query
 ```bash
 python3 upstest.py
 ```
-Выведет псевдографическую таблицу:
+Displays an ASCII telemetry table:
 ```text
 +-----------------------------------------------------------------------------+
-| Mode: Megatec_q1         Transport: hiddev   Device: /dev/usb/hiddev0        |
+| Mode: Megatec_megatec_q1 Transport: hiddev   Device: /dev/usb/hiddev0        |
 +---------------------------------++------------------------------------------+
 |     Input AC Power : Normal     || UPS Input Voltage   : 231.00 Volt        |
 |     Battery Status : Normal     || UPS Output Voltage  : 232.00 Volt        |
@@ -53,74 +55,72 @@ python3 upstest.py
 +---------------------------------++------------------------------------------+
 ```
 
-### Запрос заводской модели и версии прошивки
+### Query Hardware Model & Firmware Version
 ```bash
 python3 upstest.py --info
 ```
-Пример ответа:
+Example output:
 ```text
 ======================================================================
-ПАСПОРТ И ВЕРСИЯ ПРОШИВКИ ИБП (команда 'I\r')
+UPS IDENTITY & FIRMWARE (Command 'I\r')
 ======================================================================
-[УСПЕХ] Паспортные данные получены из чипа ИБП:
-  -> Производитель : SVC
-  -> Модель ИБП    : V-650-F-LCD
-  -> Версия ПО/FW  : V1.2
+[SUCCESS] Hardware identity retrieved from UPS:
+  -> Manufacturer     : SVC
+  -> Model Name       : V-650-F-LCD
+  -> Firmware Version : V1.2
 ```
 
-### Управление пищалкой (бипером)
+### Beeper (Sound) Control
 ```bash
-# Инвертировать текущее состояние:
+# Toggle current state:
 python3 upstest.py --beeper
 
-# Явно включить:
+# Explicitly turn ON:
 python3 upstest.py --set-beeper on
 
-# Явно выключить (тихий режим):
+# Explicitly turn OFF (Silent mode):
 python3 upstest.py --set-beeper off
 ```
 
-### Запуск самотестирования батареи
+### Battery Self-Test
 ```bash
 python3 upstest.py --selftest
 ```
-Запустит переход на батарею на 10 секунд и будет выводить параметры каждую секунду. Для досрочной отмены нажмите `Ctrl+C` (утилита пошлёт `CT\r`).
+Switches to battery power for 10 seconds and reports voltages every second. Press `Ctrl+C` to cancel early.
 
 ---
 
-## Диагностические тесты (`--test`)
+## Diagnostic Test Suite (`--test`)
 
-Для проверки состояния оборудования и протокола обмена доступны встроенные тесты:
 ```bash
-python3 upstest.py --test all       # Полный цикл диагностики (тесты 1..6)
-python3 upstest.py --test sniff      # Тест 1: прослушивание входящих пакетов USB (5 сек)
-python3 upstest.py --test baud       # Тест 2: переключение скорости 2400 бод (SetBaud)
-python3 upstest.py --test q1         # Тест 3: запрос строки Q1\r
-python3 upstest.py --test wakeup     # Тест 4: пробуждение UART (CR + Q1\r)
-python3 upstest.py --test binary     # Тест 5: проверка бинарных BCD-отчётов
-python3 upstest.py --test identity   # Тест 6: запрос паспорта I\r
-python3 upstest.py --test shm        # Проверка SysV разделяемой памяти
+python3 upstest.py --test all       # Run all 6 hardware & protocol tests
+python3 upstest.py --test sniff      # Test 1: Sniff incoming USB reports for 5s
+python3 upstest.py --test baud       # Test 2: Verify SetBaud 2400 bps
+python3 upstest.py --test q1         # Test 3: Query Megatec Q1 status
+python3 upstest.py --test wakeup     # Test 4: Test UART wakeup (CR + Q1)
+python3 upstest.py --test binary     # Test 5: Test binary BCD fallback reports
+python3 upstest.py --test identity   # Test 6: Query hardware identity (I\r)
+python3 upstest.py --test shm        # Test SysV Shared Memory
 ```
 
 ---
 
-## Режим демона (`--daemon`)
+## Background Daemon Mode (`--daemon`)
 
-Запуск фоновой службы контроля питания (полная замена оригинального `ups_monitor`):
+Run as a system monitoring service:
 ```bash
 python3 upstest.py --daemon
 ```
-Параметры задержек можно настроить интерактивно командой:
+Configure shutdown delays interactively:
 ```bash
 python3 upstest.py --config
 ```
-Или передать файл `ups_config.json` / `TimeCfg.conf`.
 
 ---
 
-## Вывод в JSON
+## JSON Output
 
-Для интеграции со сторонними системами мониторинга (Zabbix, Telegraf, Node-RED):
+For integration with third-party dashboards and monitoring agents:
 ```bash
 python3 upstest.py --json
 ```
