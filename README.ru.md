@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/banner.png" alt="SVC Richcomm UPS Monitoring" width="100%" />
+</p>
+
 # SVC / Richcomm Technologies UPS — Modern Driver & Integration Suite
 ### Полный стек драйверов, демона мониторинга и интеграции для Home Assistant (HACS)
 **(USB Vendor ID: `0x0925`, Product ID: `0x1234` / Richcomm USB to UART Bridge)**

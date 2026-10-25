@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="1200" height="420">
+  <defs>
+    <linearGradient id="bgBanner" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0f1d" />
+      <stop offset="50%" stop-color="#111827" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+
+    <linearGradient id="textGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#e2e8f0" />
+    </linearGradient>
+
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#06b6d4" />
+    </linearGradient>
+
+    <linearGradient id="boltBanner" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+
+    <filter id="bannerGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Banner Background -->
+  <rect width="1200" height="420" rx="24" fill="url(#bgBanner)" stroke="#1e293b" stroke-width="3" />
+
+  <!-- Subtle Tech Grid / Background Lines -->
+  <path d="M 0 140 L 1200 140 M 0 280 L 1200 280" stroke="#334155" stroke-width="1" stroke-opacity="0.15" />
+  <path d="M 400 0 L 400 420 M 800 0 L 800 420" stroke="#334155" stroke-width="1" stroke-opacity="0.15" />
+
+  <!-- Left Side: Integrated UPS Emblem -->
+  <g transform="translate(60, 40) scale(0.66)">
+    <!-- Squircle container -->
+    <rect x="24" y="24" width="464" height="464" rx="90" fill="#131c31" stroke="#38bdf8" stroke-width="5" stroke-opacity="0.4" />
+    
+    <!-- UPS Tower Chassis -->
+    <rect x="146" y="96" width="220" height="320" rx="28" fill="#1e293b" stroke="#475569" stroke-width="4" />
+    <!-- Screen -->
+    <rect x="176" y="132" width="160" height="110" rx="14" fill="#030712" stroke="#0ea5e9" stroke-width="3" />
+    <!-- Battery Bars -->
+    <rect x="216" y="152" width="72" height="38" rx="6" fill="none" stroke="#38bdf8" stroke-width="3" />
+    <rect x="288" y="163" width="6" height="16" rx="2" fill="#38bdf8" />
+    <rect x="223" y="158" width="14" height="26" rx="3" fill="#10b981" />
+    <rect x="241" y="158" width="14" height="26" rx="3" fill="#10b981" />
+    <rect x="259" y="158" width="14" height="26" rx="3" fill="#10b981" />
+    <!-- Online text -->
+    <text x="212" y="218" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="700" fill="#38bdf8" letter-spacing="1">ONLINE</text>
+    <!-- Lightning Bolt -->
+    <path d="M 268 258 L 228 322 L 254 322 L 244 374 L 284 310 L 258 310 Z" fill="url(#boltBanner)" filter="url(#bannerGlow)" />
+    <!-- LED -->
+    <circle cx="320" cy="114" r="5" fill="#10b981" />
+    <!-- USB dot -->
+    <circle cx="342" cy="389" r="6" fill="#38bdf8" />
+  </g>
+
+  <!-- Right Side: Brand & Product Typography -->
+  <!-- Product Title -->
+  <text x="440" y="150" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="56" font-weight="900" fill="url(#textGrad)" letter-spacing="-0.5">
+    SVC Richcomm UPS
+  </text>
+
+  <!-- Subtitle -->
+  <text x="444" y="200" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="500" fill="url(#accentGrad)" letter-spacing="0.2">
+    USB-HID Native Architecture for Home Assistant
+  </text>
+
+  <text x="444" y="240" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#94a3b8">
+    Direct kernel character device polling (/dev/usb/hiddev0) • Real-time telemetry • Zero cloud
+  </text>
+
+  <!-- Badges / Feature Tags -->
+  <!-- Badge 1: HACS -->
+  <g transform="translate(444, 275)">
+    <rect width="130" height="36" rx="8" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5" stroke-opacity="0.5" />
+    <circle cx="20" cy="18" r="5" fill="#38bdf8" />
+    <text x="36" y="23" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#f8fafc">HACS Ready</text>
+  </g>
+
+  <!-- Badge 2: Version 1.0.1 -->
+  <g transform="translate(590, 275)">
+    <rect width="90" height="36" rx="8" fill="#1e293b" stroke="#10b981" stroke-width="1.5" stroke-opacity="0.5" />
+    <circle cx="18" cy="18" r="5" fill="#10b981" />
+    <text x="32" y="23" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#34d399">v1.0.1</text>
+  </g>
+
+  <!-- Badge 3: Local Polling -->
+  <g transform="translate(696, 275)">
+    <rect width="136" height="36" rx="8" fill="#1e293b" stroke="#64748b" stroke-width="1.5" />
+    <circle cx="18" cy="18" r="5" fill="#94a3b8" />
+    <text x="32" y="23" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" fill="#cbd5e1">Local Polling</text>
+  </g>
+
+  <!-- Badge 4: Beeper Control -->
+  <g transform="translate(848, 275)">
+    <rect width="140" height="36" rx="8" fill="#1e293b" stroke="#64748b" stroke-width="1.5" />
+    <circle cx="18" cy="18" r="5" fill="#fbbf24" />
+    <text x="32" y="23" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" fill="#cbd5e1">Beeper Control</text>
+  </g>
+
+  <!-- Bottom decorative gradient accent bar -->
+  <rect x="0" y="412" width="1200" height="8" rx="4" fill="url(#accentGrad)" />
+</svg>

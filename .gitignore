@@ -34,3 +34,4 @@ upsdemo_*/
 # OS & Environment
 .DS_Store
 *.log
+.aistudio/

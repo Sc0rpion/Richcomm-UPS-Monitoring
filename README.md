@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/banner.png" alt="SVC Richcomm UPS Monitoring" width="100%" />
+</p>
+
 # SVC / Richcomm Technologies UPS — Modern Driver & Integration Suite
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom_Repository-orange.svg)](https://hacs.xyz/)

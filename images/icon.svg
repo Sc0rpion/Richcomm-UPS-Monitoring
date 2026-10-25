@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b132b" />
+      <stop offset="50%" stop-color="#1c2541" />
+      <stop offset="100%" stop-color="#0b132b" />
+    </linearGradient>
+
+    <!-- Chassis Body Gradient -->
+    <linearGradient id="chassisGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="50%" stop-color="#334155" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+
+    <!-- Cyan Glow Gradient -->
+    <linearGradient id="cyanGlow" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+
+    <!-- Energy Bolt Gradient -->
+    <linearGradient id="boltGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+
+    <!-- Amber Alert Accent -->
+    <linearGradient id="amberGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+
+    <!-- Soft Drop Shadow Filter -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Base App Tile / Background Squircle -->
+  <rect x="24" y="24" width="464" height="464" rx="104" fill="url(#bgGrad)" stroke="#38bdf8" stroke-width="6" stroke-opacity="0.3" />
+
+  <!-- Inner subtle border glow -->
+  <rect x="36" y="36" width="440" height="440" rx="92" fill="none" stroke="#60a5fa" stroke-width="2" stroke-opacity="0.15" />
+
+  <!-- UPS Tower Outer Chassis -->
+  <rect x="146" y="96" width="220" height="320" rx="28" fill="url(#chassisGrad)" stroke="#475569" stroke-width="4" />
+
+  <!-- Subtle Top Chamfer Highlight -->
+  <path d="M 174 96 L 338 96" stroke="#94a3b8" stroke-width="3" stroke-linecap="round" stroke-opacity="0.6" />
+
+  <!-- UPS Front LCD Screen Display -->
+  <rect x="176" y="132" width="160" height="110" rx="14" fill="#030712" stroke="#0ea5e9" stroke-width="2.5" />
+
+  <!-- Screen Content: Status Line & Battery Indicator -->
+  <!-- Battery Shell inside LCD -->
+  <rect x="216" y="152" width="72" height="38" rx="6" fill="none" stroke="#38bdf8" stroke-width="3" />
+  <rect x="288" y="163" width="6" height="16" rx="2" fill="#38bdf8" />
+  
+  <!-- Battery Charge Bars (Full / Online) -->
+  <rect x="223" y="158" width="14" height="26" rx="3" fill="#10b981" />
+  <rect x="241" y="158" width="14" height="26" rx="3" fill="#10b981" />
+  <rect x="259" y="158" width="14" height="26" rx="3" fill="#10b981" />
+
+  <!-- AC Line Status Waves / Sine Icon inside Screen -->
+  <path d="M 194 212 C 204 200, 212 224, 222 212 C 232 200, 240 224, 250 212" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" />
+  <text x="264" y="217" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#38bdf8" letter-spacing="1">ONLINE</text>
+
+  <!-- Big Central Power / Lightning Bolt Embellishment -->
+  <g filter="url(#glow)">
+    <path d="M 268 258 L 228 322 L 254 322 L 244 374 L 284 310 L 258 310 Z" fill="url(#boltGrad)" />
+  </g>
+
+  <!-- Cooling Grill / Ventilation Slots at Bottom of Tower -->
+  <line x1="186" y1="384" x2="236" y2="384" stroke="#0f172a" stroke-width="4" stroke-linecap="round" />
+  <line x1="276" y1="384" x2="326" y2="384" stroke="#0f172a" stroke-width="4" stroke-linecap="round" />
+  <line x1="186" y1="394" x2="236" y2="394" stroke="#0f172a" stroke-width="4" stroke-linecap="round" />
+  <line x1="276" y1="394" x2="326" y2="394" stroke="#0f172a" stroke-width="4" stroke-linecap="round" />
+
+  <!-- USB Connection Indicator Dot (bottom right of chassis) -->
+  <circle cx="342" cy="389" r="6" fill="#38bdf8" />
+  <circle cx="342" cy="389" r="10" fill="none" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.4" />
+
+  <!-- Power Status LED at top right -->
+  <circle cx="320" cy="114" r="5" fill="#10b981" />
+</svg>

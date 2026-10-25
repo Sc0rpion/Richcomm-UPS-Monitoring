@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Sc0rpion/Richcomm-UPS-Monitoring/main/images/banner.png" alt="SVC Richcomm UPS" width="100%" />
+</p>
+
 # SVC Richcomm UPS Integration for Home Assistant
 
 Complete Home Assistant integration for **SVC / Richcomm Technologies UPS** units (VID: `0x0925`, PID: `0x1234`).
