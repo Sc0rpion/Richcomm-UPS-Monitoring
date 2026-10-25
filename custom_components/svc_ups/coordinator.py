@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import timedelta
 from typing import Dict, Any, Optional
 
@@ -42,7 +43,7 @@ class SvcUpsCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
     @property
     def sw_version(self) -> str:
         """Версия программного обеспечения для карточки устройства."""
-        return f"{self.firmware_version} (Driver v1.0.1)"
+        return f"{self.firmware_version} (Driver v1.0.2)"
 
     @property
     def hw_version(self) -> str:

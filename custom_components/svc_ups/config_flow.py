@@ -53,13 +53,12 @@ class SvcUpsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Первый шаг настройки пользователем."""
         errors: dict[str, str] = {}
-        candidate_devices = _find_candidate_devices()
 
         if user_input is not None:
             device = user_input[CONF_DEVICE]
             baud = user_input.get(CONF_BAUD, DEFAULT_BAUD)
 
-            # Проверка соединения
+            # Проверка соединения в пуле потоков executor
             is_valid = await _validate_device(self.hass, device, baud)
             if is_valid:
                 await self.async_set_unique_id(f"svc_ups_{device}")
@@ -71,6 +70,9 @@ class SvcUpsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
             else:
                 errors["base"] = "cannot_connect"
+
+        # Сканирование файловой системы строго в executor, чтобы не блокировать event loop
+        candidate_devices = await self.hass.async_add_executor_job(_find_candidate_devices)
 
         schema = vol.Schema(
             {
