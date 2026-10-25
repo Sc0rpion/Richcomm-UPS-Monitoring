@@ -101,18 +101,6 @@ SENSOR_TYPES: tuple[SvcUpsSensorEntityDescription, ...] = (
         icon="mdi:information-outline",
         value_fn=lambda data: data.get("ups_status"),
     ),
-    SvcUpsSensorEntityDescription(
-        key="model",
-        name="Модель ИБП",
-        icon="mdi:barcode",
-        value_fn=lambda data: data.get("model"),
-    ),
-    SvcUpsSensorEntityDescription(
-        key="firmware_version",
-        name="Версия прошивки ИБП",
-        icon="mdi:tag-outline",
-        value_fn=lambda data: data.get("firmware_version"),
-    ),
 )
 
 
@@ -150,13 +138,14 @@ class SvcUpsSensor(CoordinatorEntity[SvcUpsCoordinator], SensorEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Динамическая информация об устройстве из чипа ИБП."""
+        """Информация об устройстве: Версия ПО и Версия аппаратного обеспечения."""
         return DeviceInfo(
             identifiers={(DOMAIN, self.entry.entry_id)},
             name=f"{self.coordinator.company} {self.coordinator.model}",
             manufacturer=self.coordinator.company,
             model=self.coordinator.model,
-            sw_version=self.coordinator.firmware_version,
+            sw_version=self.coordinator.sw_version,
+            hw_version=self.coordinator.hw_version,
         )
 
     @property

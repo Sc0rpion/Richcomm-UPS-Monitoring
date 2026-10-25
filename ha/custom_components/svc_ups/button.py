@@ -41,13 +41,14 @@ class SvcUpsStartTestButton(CoordinatorEntity[SvcUpsCoordinator], ButtonEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Динамическая информация об устройстве из чипа ИБП."""
+        """Информация об устройстве: Версия ПО и Версия аппаратного обеспечения."""
         return DeviceInfo(
             identifiers={(DOMAIN, self.entry.entry_id)},
             name=f"{self.coordinator.company} {self.coordinator.model}",
             manufacturer=self.coordinator.company,
             model=self.coordinator.model,
-            sw_version=self.coordinator.firmware_version,
+            sw_version=self.coordinator.sw_version,
+            hw_version=self.coordinator.hw_version,
         )
 
     async def async_press(self) -> None:
@@ -67,13 +68,14 @@ class SvcUpsCancelTestButton(CoordinatorEntity[SvcUpsCoordinator], ButtonEntity)
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Динамическая информация об устройстве из чипа ИБП."""
+        """Информация об устройстве: Версия ПО и Версия аппаратного обеспечения."""
         return DeviceInfo(
             identifiers={(DOMAIN, self.entry.entry_id)},
             name=f"{self.coordinator.company} {self.coordinator.model}",
             manufacturer=self.coordinator.company,
             model=self.coordinator.model,
-            sw_version=self.coordinator.firmware_version,
+            sw_version=self.coordinator.sw_version,
+            hw_version=self.coordinator.hw_version,
         )
 
     async def async_press(self) -> None:

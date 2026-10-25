@@ -33,8 +33,21 @@ class SvcUpsCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self.company = "SVC"
         self.model = "Richcomm UPS"
         self.firmware_version = "V1.0"
+        self._hw_version = "Richcomm USB-to-UART Bridge (0925:1234)"
         self._identity_loaded = False
+        self._identity_attempts = 0
         self._update_counter = 0
+        self._consecutive_failures = 0
+
+    @property
+    def sw_version(self) -> str:
+        """Версия программного обеспечения для карточки устройства."""
+        return f"{self.firmware_version} (Driver v1.0.1)"
+
+    @property
+    def hw_version(self) -> str:
+        """Версия аппаратного обеспечения для карточки устройства."""
+        return self._hw_version
 
     async def _async_update_data(self) -> Dict[str, Any]:
         """Опрос ИБП в пуле потоков."""
@@ -44,24 +57,48 @@ class SvcUpsCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             raise UpdateFailed(f"Error communicating with UPS: {err}") from err
 
     def _update_sync(self) -> Dict[str, Any]:
-        """Синхронный вызов низкоуровневого драйвера."""
-        # 1. Запрос версии и модели ИБП (команда I\r) при старте и раз в 100 циклов
-        if not self._identity_loaded or (self._update_counter % 100 == 0):
-            ident = self.driver.query_identity()
-            if ident:
-                self.company = ident.company
-                self.model = ident.model
-                self.firmware_version = ident.version
-                self._identity_loaded = True
-                _LOGGER.info("Получены данные из ИБП: Производитель='%s', Модель='%s', Прошивка='%s'",
-                             self.company, self.model, self.firmware_version)
+        """Синхронный вызов низкоуровневого драйвера с авто-восстановлением."""
+        # 1. Запрос версии и модели ИБП (I\r) при старте (до 3 попыток, затем раз в 200 циклов)
+        if (not self._identity_loaded and self._identity_attempts < 3) or (self._update_counter % 200 == 0):
+            self._identity_attempts += 1
+            try:
+                ident = self.driver.query_identity()
+                if ident:
+                    self.company = ident.company
+                    self.model = ident.model
+                    self.firmware_version = ident.version
+                    self._identity_loaded = True
+                    _LOGGER.info(
+                        "Паспорт ИБП получен: Производитель='%s', Модель='%s', ПО='%s'",
+                        self.company, self.model, self.firmware_version
+                    )
+            except Exception as e:
+                _LOGGER.debug("Попытка чтения паспорта I\\r не удалась: %s", e)
+            time.sleep(0.15)
 
         self._update_counter += 1
 
-        # 2. Запрос телеметрии (Q1\r)
+        # 2. Запрос телеметрии (Q1\r) с автоматической повторной попыткой
         reading = self.driver.query_status()
         if not reading:
-            raise UpdateFailed("UPS did not return valid status")
+            time.sleep(0.2)
+            reading = self.driver.query_status()
+
+        if not reading:
+            self._consecutive_failures += 1
+            # Если это единичный сбой (< 3 циклов подряд) и есть предыдущие данные,
+            # возвращаем кэш и не спамим UpdateFailed в лог Home Assistant
+            if self.data is not None and self._consecutive_failures < 3:
+                _LOGGER.warning(
+                    "Кратковременная потеря пакета Q1 (%d/3). Сохранены предыдущие показания ИБП.",
+                    self._consecutive_failures
+                )
+                cached = dict(self.data)
+                cached["online"] = True
+                return cached
+            raise UpdateFailed("UPS did not return valid status after retries")
+
+        self._consecutive_failures = 0
 
         status_mask = reading.status
         ac_online = not bool(status_mask & St.AC_FAIL)

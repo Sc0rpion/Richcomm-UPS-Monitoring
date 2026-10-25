@@ -99,10 +99,24 @@ def parse_q1(frame: bytes) -> Optional[StatusReading]:
     sub = frame[start:end] if end >= 0 else frame[start:]
     text = sub[1:].decode("ascii", errors="replace").strip()
     tok = text.split()
-    if len(tok) < 8 or len(tok[7]) != 8:
+    if len(tok) < 8:
         return None
 
-    status = sum(1 << (7 - i) for i, c in enumerate(tok[7]) if c == "1")
+    # Ищем токен статуса (8 символов из '0' и '1')
+    status_tok = None
+    if len(tok[7]) == 8 and all(c in "01" for c in tok[7]):
+        status_tok = tok[7]
+    else:
+        for t in reversed(tok):
+            clean_t = t.strip()
+            if len(clean_t) == 8 and all(c in "01" for c in clean_t):
+                status_tok = clean_t
+                break
+
+    if not status_tok:
+        return None
+
+    status = sum(1 << (7 - i) for i, c in enumerate(status_tok) if c == "1")
     return StatusReading(
         ac_in=_chk(tok[0], -1, 450),
         ac_out=_chk(tok[2], -1, 450),
@@ -173,9 +187,45 @@ class SvcUpsHardware:
             self.error = True
             return False
 
+    def _find_device_path(self) -> Optional[str]:
+        """Поиск узла hiddev с VID=0925, PID=1234 при переподключении ядра."""
+        candidates = [self.dev_path] if self.dev_path else []
+        for i in range(16):
+            p = f"/dev/usb/hiddev{i}"
+            if p not in candidates:
+                candidates.append(p)
+
+        for path in candidates:
+            if not os.path.exists(path):
+                continue
+            try:
+                test_fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+            except OSError:
+                continue
+            try:
+                info = bytearray(28)
+                fcntl.ioctl(test_fd, HIDIOCGDEVINFO, info)
+                vid, pid = struct.unpack_from("<HH", info, 16)
+                os.close(test_fd)
+                if (vid, pid) == (0x0925, 0x1234):
+                    return path
+            except OSError:
+                os.close(test_fd)
+                continue
+        return None
+
     def open(self) -> bool:
-        if self.fd >= 0:
+        if self.fd >= 0 and not self.error:
             return True
+
+        if self.fd >= 0 or self.error:
+            self.close()
+
+        # Поиск рабочего узла устройства (на случай если ядро переподключило hiddev0 -> hiddev1)
+        found_path = self._find_device_path()
+        if found_path and found_path != self.dev_path:
+            _LOGGER.info("ИБП найден на узле: %s (прежний: %s)", found_path, self.dev_path)
+            self.dev_path = found_path
 
         # Автосоздание узла при необходимости
         os.makedirs("/dev/usb", exist_ok=True)
@@ -189,6 +239,7 @@ class SvcUpsHardware:
             self.fd = os.open(self.dev_path, os.O_RDWR)
         except OSError as e:
             _LOGGER.error("Cannot open %s: %s", self.dev_path, e)
+            self.error = True
             return False
 
         # Связывание дескрипторов
@@ -207,6 +258,7 @@ class SvcUpsHardware:
         with self.cond:
             self.uart_buf.clear()
 
+        self.error = False
         self._running = True
         self._thread = threading.Thread(target=self._reader, daemon=True, name="HA_USBReadThread")
         self._thread.start()
@@ -279,41 +331,48 @@ class SvcUpsHardware:
         return None
 
     def query_status(self) -> Optional[StatusReading]:
-        """Запрос статуса Q1\\r."""
+        """Запрос статуса Q1\\r с повторной попыткой и резервным статусом."""
         with self._cmd_lock:
             if not self.open():
                 return None
 
-            frame = self._query_frame(b"Q1\r", header_char=b"(", timeout_sec=1.6)
+            frame = self._query_frame(b"Q1\r", header_char=b"(", timeout_sec=1.8)
             if frame:
-                return parse_q1(frame)
+                r = parse_q1(frame)
+                if r is not None:
+                    return r
 
             # Wakeup retry
             self.send_text(b"\r")
-            time.sleep(0.08)
-            frame = self._query_frame(b"Q1\r", header_char=b"(", timeout_sec=1.2)
+            time.sleep(0.1)
+            frame = self._query_frame(b"Q1\r", header_char=b"(", timeout_sec=1.5)
             if frame:
-                return parse_q1(frame)
+                r = parse_q1(frame)
+                if r is not None:
+                    return r
 
-            # Резервный статус
-            ac_ok = bool(self.last_status_byte & 0x80)
-            batt_ok = bool(self.last_status_byte & 0x40)
-            status = 0
-            if not ac_ok:
-                status |= St.AC_FAIL
-            if not batt_ok:
-                status |= St.LOW_BATT
+            # Резервный аппаратный статус от контроллера
+            if self.last_status_byte is not None:
+                ac_ok = bool(self.last_status_byte & 0x80)
+                batt_ok = bool(self.last_status_byte & 0x40)
+                status = 0
+                if not ac_ok:
+                    status |= St.AC_FAIL
+                if not batt_ok:
+                    status |= St.LOW_BATT
 
-            return StatusReading(
-                ac_in=230.0 if ac_ok else 0.0,
-                ac_out=230.0,
-                load=10.0,
-                freq=50.0,
-                dc=13.8 if batt_ok else 11.2,
-                temp=28.0,
-                status=status,
-                raw_response=f"Status Byte: 0x{self.last_status_byte:02X}"
-            )
+                return StatusReading(
+                    ac_in=230.0 if ac_ok else 0.0,
+                    ac_out=230.0,
+                    load=10.0,
+                    freq=50.0,
+                    dc=13.8 if batt_ok else 11.2,
+                    temp=28.0,
+                    status=status,
+                    raw_response=f"Fallback Hardware Byte: 0x{self.last_status_byte:02X}"
+                )
+
+            return None
 
     def query_identity(self) -> Optional[Identity]:
         """Запрос паспортных данных ИБП (команда I\\r): Производитель, Модель, Версия прошивки."""
