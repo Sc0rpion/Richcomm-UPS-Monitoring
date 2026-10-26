@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -11,143 +11,132 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
+    EntityCategory,
+    UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfFrequency,
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.typing import StateType
 
-from .const import DOMAIN
-from .coordinator import SvcUpsCoordinator
+from .coordinator import SvcUpsConfigEntry
+from .entity import SvcUpsEntity
+from .model import SvcUpsData
 
-
-@dataclass
-class SvcUpsSensorEntityDescription(SensorEntityDescription):
-    value_fn: Callable[[dict[str, Any]], Any] = lambda data: None
+PARALLEL_UPDATES = 0  # данные берутся из координатора, обращений к устройству нет
 
 
-SENSOR_TYPES: tuple[SvcUpsSensorEntityDescription, ...] = (
-    SvcUpsSensorEntityDescription(
-        key="input_voltage",
-        name="Входное напряжение",
-        device_class=SensorDeviceClass.VOLTAGE,
+@dataclass(frozen=True, kw_only=True)
+class SvcUpsSensorDescription(SensorEntityDescription):
+    value_fn: Callable[[SvcUpsData], StateType]
+
+
+def _measure(key: str, device_class, unit, fn, precision: int | None = 1, **kw) -> SvcUpsSensorDescription:
+    return SvcUpsSensorDescription(
+        key=key,
+        translation_key=key,
+        device_class=device_class,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        value_fn=lambda data: data.get("input_voltage"),
-    ),
-    SvcUpsSensorEntityDescription(
-        key="output_voltage",
-        name="Выходное напряжение",
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        value_fn=lambda data: data.get("output_voltage"),
-    ),
-    SvcUpsSensorEntityDescription(
-        key="battery_voltage",
-        name="Напряжение батареи",
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        value_fn=lambda data: data.get("battery_voltage"),
-    ),
-    SvcUpsSensorEntityDescription(
-        key="battery_level",
-        name="Заряд батареи",
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=PERCENTAGE,
-        value_fn=lambda data: data.get("battery_level"),
-    ),
-    SvcUpsSensorEntityDescription(
-        key="load_percent",
-        name="Нагрузка",
-        icon="mdi:gauge",
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=PERCENTAGE,
-        value_fn=lambda data: data.get("load_percent"),
-    ),
-    SvcUpsSensorEntityDescription(
-        key="frequency",
-        name="Частота сети",
-        device_class=SensorDeviceClass.FREQUENCY,
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfFrequency.HERTZ,
-        value_fn=lambda data: data.get("frequency"),
-    ),
-    SvcUpsSensorEntityDescription(
-        key="temperature",
-        name="Температура",
-        device_class=SensorDeviceClass.TEMPERATURE,
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        value_fn=lambda data: data.get("temperature"),
-    ),
-    SvcUpsSensorEntityDescription(
+        native_unit_of_measurement=unit,
+        suggested_display_precision=precision,
+        value_fn=fn,
+        **kw,
+    )
+
+
+_DIAG = {"entity_category": EntityCategory.DIAGNOSTIC}
+_DIAG_OFF = {**_DIAG, "entity_registry_enabled_default": False}
+
+SENSOR_TYPES: tuple[SvcUpsSensorDescription, ...] = (
+    _measure("input_voltage", SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, lambda d: d.input_voltage),
+    _measure("output_voltage", SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, lambda d: d.output_voltage),
+    _measure("battery_voltage", SensorDeviceClass.VOLTAGE, UnitOfElectricPotential.VOLT, lambda d: d.battery_voltage, 2),
+    _measure("battery_level", SensorDeviceClass.BATTERY, PERCENTAGE, lambda d: d.battery_level, 0),
+    _measure("load_percent", None, PERCENTAGE, lambda d: d.load_percent, 0),
+    _measure("frequency", SensorDeviceClass.FREQUENCY, UnitOfFrequency.HERTZ, lambda d: d.frequency),
+    _measure("temperature", SensorDeviceClass.TEMPERATURE, UnitOfTemperature.CELSIUS, lambda d: d.temperature),
+    SvcUpsSensorDescription(
         key="ac_status",
-        name="Статус сети 220V",
-        icon="mdi:power-plug",
-        value_fn=lambda data: data.get("ac_status"),
+        translation_key="ac_status",
+        device_class=SensorDeviceClass.ENUM,
+        options=["normal", "utility_fail"],
+        value_fn=lambda d: d.ac_state,
     ),
-    SvcUpsSensorEntityDescription(
+    SvcUpsSensorDescription(
         key="ups_status",
-        name="Статус ИБП",
-        icon="mdi:information-outline",
-        value_fn=lambda data: data.get("ups_status"),
+        translation_key="ups_status",
+        device_class=SensorDeviceClass.ENUM,
+        options=["normal", "failed"],
+        value_fn=lambda d: d.ups_state,
+    ),
+    SvcUpsSensorDescription(key="model", translation_key="model", value_fn=lambda d: d.identity.model, **_DIAG),
+    SvcUpsSensorDescription(
+        key="firmware_version",
+        translation_key="firmware_version",
+        value_fn=lambda d: d.identity.version or None,
+        **_DIAG,
+    ),
+    # номиналы из ответа F
+    _measure(
+        "rated_voltage",
+        SensorDeviceClass.VOLTAGE,
+        UnitOfElectricPotential.VOLT,
+        lambda d: d.rating.voltage if d.rating else None,
+        **_DIAG_OFF,
+    ),
+    _measure(
+        "rated_current",
+        SensorDeviceClass.CURRENT,
+        UnitOfElectricCurrent.AMPERE,
+        lambda d: d.rating.current if d.rating else None,
+        **_DIAG_OFF,
+    ),
+    _measure(
+        "rated_battery_voltage",
+        SensorDeviceClass.VOLTAGE,
+        UnitOfElectricPotential.VOLT,
+        lambda d: d.rating.battery_voltage if d.rating else None,
+        **_DIAG_OFF,
+    ),
+    _measure(
+        "rated_frequency",
+        SensorDeviceClass.FREQUENCY,
+        UnitOfFrequency.HERTZ,
+        lambda d: d.rating.frequency if d.rating else None,
+        **_DIAG_OFF,
+    ),
+    SvcUpsSensorDescription(
+        key="raw_response",
+        translation_key="raw_response",
+        value_fn=lambda d: d.raw_response,
+        **_DIAG_OFF,
     ),
 )
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: SvcUpsConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Создание сенсоров ИБП."""
-    coordinator: SvcUpsCoordinator = hass.data[DOMAIN][entry.entry_id]
-
-    entities = [
-        SvcUpsSensor(coordinator, entry, description)
-        for description in SENSOR_TYPES
-    ]
-    async_add_entities(entities)
+    coordinator = entry.runtime_data
+    async_add_entities(SvcUpsSensor(coordinator, description) for description in SENSOR_TYPES)
 
 
-class SvcUpsSensor(CoordinatorEntity[SvcUpsCoordinator], SensorEntity):
+class SvcUpsSensor(SvcUpsEntity, SensorEntity):
     """Сущность сенсора SVC UPS."""
 
-    entity_description: SvcUpsSensorEntityDescription
+    entity_description: SvcUpsSensorDescription
 
-    def __init__(
-        self,
-        coordinator: SvcUpsCoordinator,
-        entry: ConfigEntry,
-        description: SvcUpsSensorEntityDescription,
-    ) -> None:
-        super().__init__(coordinator)
-        self.entry = entry
+    def __init__(self, coordinator, description: SvcUpsSensorDescription) -> None:
+        super().__init__(coordinator, description.key)
         self.entity_description = description
-        self._attr_unique_id = f"{entry.entry_id}_{description.key}"
-        self._attr_name = f"SVC UPS {description.name}"
 
     @property
-    def device_info(self) -> DeviceInfo:
-        """Информация об устройстве: Версия ПО и Версия аппаратного обеспечения."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.entry.entry_id)},
-            name=f"{self.coordinator.company} {self.coordinator.model}",
-            manufacturer=self.coordinator.company,
-            model=self.coordinator.model,
-            sw_version=self.coordinator.sw_version,
-            hw_version=self.coordinator.hw_version,
-        )
-
-    @property
-    def native_value(self) -> Any:
+    def native_value(self) -> StateType:
         return self.entity_description.value_fn(self.coordinator.data)

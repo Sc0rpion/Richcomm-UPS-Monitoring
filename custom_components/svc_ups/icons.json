@@ -1,0 +1,33 @@
+{
+  "entity": {
+    "switch": {
+      "beeper": {
+        "default": "mdi:volume-off",
+        "state": {"on": "mdi:volume-high", "off": "mdi:volume-off"}
+      }
+    },
+    "button": {
+      "start_self_test": {"default": "mdi:battery-heart-variant"},
+      "cancel_self_test": {"default": "mdi:cancel"},
+      "toggle_beeper": {"default": "mdi:volume-vibrate"}
+    },
+    "sensor": {
+      "load_percent": {"default": "mdi:gauge"},
+      "ac_status": {"default": "mdi:power-plug"},
+      "ups_status": {"default": "mdi:information-outline"},
+      "model": {"default": "mdi:barcode"},
+      "firmware_version": {"default": "mdi:tag-outline"},
+      "raw_response": {"default": "mdi:code-string"}
+    },
+    "binary_sensor": {
+      "boost_buck": {"default": "mdi:sine-wave"},
+      "test_in_progress": {"default": "mdi:progress-check"},
+      "shutdown_active": {"default": "mdi:power-sleep"}
+    }
+  },
+  "services": {
+    "toggle_beeper": {"service": "mdi:volume-vibrate"},
+    "start_self_test": {"service": "mdi:battery-heart-variant"},
+    "cancel_self_test": {"service": "mdi:cancel"}
+  }
+}

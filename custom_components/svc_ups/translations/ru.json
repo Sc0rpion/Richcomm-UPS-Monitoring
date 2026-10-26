@@ -1,0 +1,189 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "SVC Richcomm UPS",
+        "description": "Найденные мосты ИБП: {found}. Мост определяется по VID 0925 / PID 1234.",
+        "data": {
+          "device": "Устройство HID",
+          "baud": "Скорость UART моста (бод)",
+          "scan_interval": "Интервал опроса"
+        },
+        "data_description": {
+          "device": "Путь к узлу hiddev, например /dev/usb/hiddev0.",
+          "baud": "Оставьте 2400, если ИБП не использует другую скорость.",
+          "scan_interval": "Секунд между опросами статуса (5-300)."
+        }
+      },
+      "reconfigure": {
+        "title": "Перенастройка SVC UPS",
+        "description": "Найденные мосты ИБП: {found}. Мост определяется по VID 0925 / PID 1234.",
+        "data": {
+          "device": "Устройство HID",
+          "baud": "Скорость UART моста (бод)"
+        },
+        "data_description": {
+          "device": "Путь к узлу hiddev, например /dev/usb/hiddev0.",
+          "baud": "Оставьте 2400, если ИБП не использует другую скорость."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Не удалось открыть устройство или это не мост Richcomm.",
+      "no_response": "Мост открыт, но ИБП не отвечает на команду Q1."
+    },
+    "abort": {
+      "already_configured": "Этот ИБП уже настроен.",
+      "reconfigure_successful": "Настройки обновлены."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Параметры SVC UPS",
+        "data": {
+          "scan_interval": "Интервал опроса"
+        },
+        "data_description": {
+          "scan_interval": "Секунд между опросами статуса (5-300)."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "input_voltage": {
+        "name": "Входное напряжение"
+      },
+      "output_voltage": {
+        "name": "Выходное напряжение"
+      },
+      "battery_voltage": {
+        "name": "Напряжение батареи"
+      },
+      "battery_level": {
+        "name": "Заряд батареи"
+      },
+      "load_percent": {
+        "name": "Нагрузка"
+      },
+      "frequency": {
+        "name": "Выходная частота"
+      },
+      "temperature": {
+        "name": "Температура"
+      },
+      "model": {
+        "name": "Модель ИБП"
+      },
+      "firmware_version": {
+        "name": "Версия прошивки ИБП"
+      },
+      "rated_voltage": {
+        "name": "Номинальное напряжение"
+      },
+      "rated_current": {
+        "name": "Номинальный ток"
+      },
+      "rated_battery_voltage": {
+        "name": "Номинальное напряжение батареи"
+      },
+      "rated_frequency": {
+        "name": "Номинальная частота"
+      },
+      "raw_response": {
+        "name": "Ответ Q1 (raw)"
+      },
+      "ac_status": {
+        "name": "Статус сети 220V",
+        "state": {
+          "normal": "Норма",
+          "utility_fail": "Отказ сети"
+        }
+      },
+      "ups_status": {
+        "name": "Статус ИБП",
+        "state": {
+          "normal": "Норма",
+          "failed": "Отказ"
+        }
+      }
+    },
+    "binary_sensor": {
+      "ac_power": {
+        "name": "Сеть 220V подключена"
+      },
+      "battery_low": {
+        "name": "Батарея разряжена"
+      },
+      "boost_buck": {
+        "name": "Стабилизатор AVR (Boost/Buck)"
+      },
+      "ups_problem": {
+        "name": "Авария / Отказ ИБП"
+      },
+      "test_in_progress": {
+        "name": "Самотестирование активно"
+      },
+      "shutdown_active": {
+        "name": "Режим отключения"
+      }
+    },
+    "switch": {
+      "beeper": {
+        "name": "Звуковая сигнализация (бипер)"
+      }
+    },
+    "button": {
+      "start_self_test": {
+        "name": "Запустить самотестирование (10 сек)"
+      },
+      "cancel_self_test": {
+        "name": "Отменить тестирование"
+      },
+      "toggle_beeper": {
+        "name": "Переключить бипер"
+      }
+    }
+  },
+  "exceptions": {
+    "command_failed": {
+      "message": "Команда ИБП не выполнена: {error}"
+    },
+    "entry_not_found": {
+      "message": "Нет загруженной записи SVC UPS с идентификатором {entry_id}."
+    }
+  },
+  "services": {
+    "toggle_beeper": {
+      "name": "Переключить бипер",
+      "description": "Переключает бипер ИБП и дожидается подтверждения нового состояния.",
+      "fields": {
+        "entry_id": {
+          "name": "ИБП",
+          "description": "Запись интеграции; если не указана - все ИБП."
+        }
+      }
+    },
+    "start_self_test": {
+      "name": "Запустить самотестирование",
+      "description": "Запускает 10-секундный тест батареи (T).",
+      "fields": {
+        "entry_id": {
+          "name": "ИБП",
+          "description": "Запись интеграции; если не указана - все ИБП."
+        }
+      }
+    },
+    "cancel_self_test": {
+      "name": "Отменить самотестирование",
+      "description": "Отменяет идущий тест батареи (CT).",
+      "fields": {
+        "entry_id": {
+          "name": "ИБП",
+          "description": "Запись интеграции; если не указана - все ИБП."
+        }
+      }
+    }
+  }
+}

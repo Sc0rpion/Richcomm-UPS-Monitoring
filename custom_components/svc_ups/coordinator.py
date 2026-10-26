@@ -3,160 +3,166 @@
 from __future__ import annotations
 
 import logging
-import time
 from datetime import timedelta
-from typing import Dict, Any, Optional
+from typing import Callable, Optional
 
-from homeassistant.core import HomeAssistant
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, ATTR_RAW_RESPONSE
-from .driver import SvcUpsHardware, StatusReading, St, Identity
+from .const import (
+    CONF_BAUD,
+    CONF_DEVICE,
+    CONF_PHYS,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_BAUD,
+    DEFAULT_DEVICE,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+    MAX_SOFT_FAILURES,
+    MIN_SCAN_INTERVAL,
+)
+from .driver import Identity, Rating, StatusReading, SvcUpsHardware, UpsError
+from .model import GlitchFilter, SvcUpsData, build_data
 
 _LOGGER = logging.getLogger(__name__)
 
+SvcUpsConfigEntry = ConfigEntry["SvcUpsCoordinator"]
 
-class SvcUpsCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
-    """Класс координатора опроса ИБП."""
+_META_MAX_TRIES = 3  # паспорт (I) и номиналы (F) запрашиваем не более 3 раз каждый
+_META_EVERY = 6  # ...и не чаще раза в 6 опросов
 
-    def __init__(self, hass: HomeAssistant, device: str, baud: int, scan_interval: int):
+
+def scan_interval_of(entry: ConfigEntry) -> int:
+    value = entry.options.get(CONF_SCAN_INTERVAL, entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+    return max(MIN_SCAN_INTERVAL, int(value))
+
+
+class SvcUpsCoordinator(DataUpdateCoordinator[SvcUpsData]):
+    """Опрос ИБП (Q1), разовый запрос паспорта (I) и номиналов (F), команды управления."""
+
+    config_entry: SvcUpsConfigEntry
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: SvcUpsConfigEntry,
+        driver: Optional[SvcUpsHardware] = None,
+    ) -> None:
         super().__init__(
             hass,
             _LOGGER,
-            name=DOMAIN,
-            update_interval=timedelta(seconds=scan_interval),
+            config_entry=entry,
+            name=f"{DOMAIN}_{entry.entry_id}",
+            update_interval=timedelta(seconds=scan_interval_of(entry)),
         )
-        self.device = device
-        self.baud = baud
-        self.driver = SvcUpsHardware(dev_path=device, baud=baud)
+        self.driver = driver or SvcUpsHardware(
+            dev_path=entry.data.get(CONF_DEVICE, DEFAULT_DEVICE),
+            baud=int(entry.data.get(CONF_BAUD, DEFAULT_BAUD)),
+            phys=entry.data.get(CONF_PHYS),
+        )
+        self.identity = Identity()
+        self.rating: Optional[Rating] = None
+        self._identity_tries = 0
+        self._rating_tries = 0
+        self._updates = 0
+        self._failures = 0
+        self._meta_dirty = False
+        self.glitch_filter = GlitchFilter()
 
-        # Паспортные данные ИБП (динамически запрашиваются из самого ИБП)
-        self.company = "SVC"
-        self.model = "Richcomm UPS"
-        self.firmware_version = "V1.0"
-        self._hw_version = "Richcomm USB-to-UART Bridge (0925:1234)"
-        self._identity_loaded = False
-        self._identity_attempts = 0
-        self._update_counter = 0
-        self._consecutive_failures = 0
+    # ----- опрос -----
+    async def _async_update_data(self) -> SvcUpsData:
+        data = await self.hass.async_add_executor_job(self._update_sync)
+        if self._meta_dirty:
+            self._meta_dirty = False
+            self._async_update_device_registry()
+        return data
 
-    @property
-    def sw_version(self) -> str:
-        """Версия программного обеспечения для карточки устройства."""
-        return f"{self.firmware_version} (Driver v1.0.2)"
-
-    @property
-    def hw_version(self) -> str:
-        """Версия аппаратного обеспечения для карточки устройства."""
-        return self._hw_version
-
-    async def _async_update_data(self) -> Dict[str, Any]:
-        """Опрос ИБП в пуле потоков."""
-        try:
-            return await self.hass.async_add_executor_job(self._update_sync)
-        except Exception as err:
-            raise UpdateFailed(f"Error communicating with UPS: {err}") from err
-
-    def _update_sync(self) -> Dict[str, Any]:
-        """Синхронный вызов низкоуровневого драйвера с авто-восстановлением."""
-        # 1. Запрос версии и модели ИБП (I\r) при старте (до 3 попыток, затем раз в 200 циклов)
-        if (not self._identity_loaded and self._identity_attempts < 3) or (self._update_counter % 200 == 0):
-            self._identity_attempts += 1
-            try:
-                ident = self.driver.query_identity()
-                if ident:
-                    self.company = ident.company
-                    self.model = ident.model
-                    self.firmware_version = ident.version
-                    self._identity_loaded = True
-                    _LOGGER.info(
-                        "Паспорт ИБП получен: Производитель='%s', Модель='%s', ПО='%s'",
-                        self.company, self.model, self.firmware_version
-                    )
-            except Exception as e:
-                _LOGGER.debug("Попытка чтения паспорта I\\r не удалась: %s", e)
-            time.sleep(0.15)
-
-        self._update_counter += 1
-
-        # 2. Запрос телеметрии (Q1\r) с автоматической повторной попыткой
-        reading = self.driver.query_status()
-        if not reading:
-            time.sleep(0.2)
-            reading = self.driver.query_status()
-
-        if not reading:
-            self._consecutive_failures += 1
-            # Если это единичный сбой (< 3 циклов подряд) и есть предыдущие данные,
-            # возвращаем кэш и не спамим UpdateFailed в лог Home Assistant
-            if self.data is not None and self._consecutive_failures < 3:
-                _LOGGER.warning(
-                    "Кратковременная потеря пакета Q1 (%d/3). Сохранены предыдущие показания ИБП.",
-                    self._consecutive_failures
+    def _load_metadata(self) -> None:
+        if self.rating is None and self._rating_tries < _META_MAX_TRIES:
+            self._rating_tries += 1
+            rating = self.driver.query_rating()
+            if rating is not None:
+                self.rating = rating
+                self._meta_dirty = True
+        if self._identity_tries < _META_MAX_TRIES and self.identity == Identity():
+            self._identity_tries += 1
+            identity = self.driver.query_identity()
+            if identity is not None and identity != self.identity:
+                self.identity = identity
+                self._meta_dirty = True
+                _LOGGER.info(
+                    "Паспорт ИБП: производитель=%s, модель=%s, прошивка=%s",
+                    identity.company,
+                    identity.model,
+                    identity.version or "?",
                 )
-                cached = dict(self.data)
-                cached["online"] = True
-                return cached
-            raise UpdateFailed("UPS did not return valid status after retries")
 
-        self._consecutive_failures = 0
+    def _update_sync(self) -> SvcUpsData:
+        reading = self.driver.query_status()
+        if reading is None:
+            self._failures += 1
+            if self.data is not None and self._failures < MAX_SOFT_FAILURES:
+                _LOGGER.debug("ИБП не ответил (%d/%d), оставляю прошлые значения", self._failures, MAX_SOFT_FAILURES)
+                return self.data
+            raise UpdateFailed("ИБП не вернул корректный статус (Q1)")
+        self._failures = 0
+        reading = self.glitch_filter.accept(reading, lambda: self.driver.query_status(attempts=1))
+        if reading is None:  # выброс не подтверждён: ИБП отвечает, но показание сомнительное
+            if self.data is not None:
+                return self.data
+            raise UpdateFailed("Первое показание ИБП не подтвердилось повторным чтением")
+        if self._updates % _META_EVERY == 0:
+            self._load_metadata()
+        self._updates += 1
+        return build_data(reading, self.identity, self.rating)
 
-        status_mask = reading.status
-        ac_online = not bool(status_mask & St.AC_FAIL)
-        batt_low = bool(status_mask & St.LOW_BATT)
-        bypass = bool(status_mask & St.BYPASS)
-        ups_fail = bool(status_mask & St.UPS_FAIL)
-        test = bool(status_mask & St.TEST)
-        shut = bool(status_mask & St.SHUTDOWN)
-        beeper = bool(status_mask & St.BEEPER)
+    @callback
+    def _async_update_device_registry(self) -> None:
+        registry = dr.async_get(self.hass)
+        device = registry.async_get_device(identifiers={(DOMAIN, self.config_entry.entry_id)})
+        if device is not None:
+            registry.async_update_device(
+                device.id,
+                manufacturer=self.identity.company,
+                model=self.identity.model,
+                sw_version=self.identity.version or None,
+            )
 
-        batt_pct = 100.0
-        if reading.dc is not None:
-            # 12В АКБ расчет: 10.5В = 0%, 13.6В = 100%
-            batt_pct = max(0.0, min(100.0, ((reading.dc - 10.5) / (13.6 - 10.5)) * 100.0))
+    # ----- команды -----
+    async def _async_command(self, func: Callable[[], Optional[StatusReading]]) -> None:
+        """Выполнить команду в executor и сразу опубликовать подтверждённое состояние.
+        async_request_refresh не годится: у него дебаунс 10 с, и интерфейс показывал
+        старое состояние бипера."""
+        try:
+            reading = await self.hass.async_add_executor_job(func)
+        except UpsError as err:
+            await self.async_refresh()  # показать реальное состояние
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        if reading is None:
+            await self.async_refresh()
+            return
+        self._failures = 0
+        self.async_set_updated_data(build_data(reading, self.identity, self.rating))
 
-        return {
-            "online": True,
-            "company": self.company,
-            "model": self.model,
-            "firmware_version": self.firmware_version,
-            "input_voltage": reading.ac_in or 0.0,
-            "output_voltage": reading.ac_out or 0.0,
-            "load_percent": reading.load or 0.0,
-            "frequency": reading.freq or 50.0,
-            "battery_voltage": reading.dc or 13.6,
-            "battery_level": round(batt_pct, 1),
-            "temperature": reading.temp or 25.0,
-            "ac_status": "Normal" if ac_online else "Utility Fail",
-            "battery_status": "Battery Low" if batt_low else "Normal",
-            "ups_status": "Failed" if ups_fail else "Normal",
-            "boost_buck": bypass,
-            "beeper": beeper,
-            "test_in_progress": test,
-            "shutdown_active": shut,
-            ATTR_RAW_RESPONSE: reading.raw_response,
-        }
-
-    async def async_set_beeper(self, enable: bool) -> bool:
-        """Надёжное включение/выключение пищалки с подтверждением."""
-        ok = await self.hass.async_add_executor_job(self.driver.set_beeper, enable)
-        await self.async_request_refresh()
-        return ok
+    async def async_set_beeper(self, enable: bool) -> None:
+        await self._async_command(lambda: self.driver.set_beeper(enable))
 
     async def async_toggle_beeper(self) -> None:
-        """Переключение пищалки."""
-        await self.hass.async_add_executor_job(self.driver.toggle_beeper)
-        await self.async_request_refresh()
+        await self._async_command(self.driver.toggle_beeper)
 
     async def async_start_self_test(self) -> None:
-        """Сервис запуска 10-секундного теста батареи."""
-        await self.hass.async_add_executor_job(self.driver.start_self_test)
-        await self.async_request_refresh()
+        await self._async_command(self.driver.start_self_test)
 
     async def async_cancel_self_test(self) -> None:
-        """Сервис отмены теста батареи."""
-        await self.hass.async_add_executor_job(self.driver.cancel_self_test)
-        await self.async_request_refresh()
+        await self._async_command(self.driver.cancel_self_test)
 
-    def close(self):
-        self.driver.close()
+    async def async_shutdown(self) -> None:
+        await super().async_shutdown()
+        await self.hass.async_add_executor_job(self.driver.close)

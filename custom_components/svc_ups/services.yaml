@@ -1,0 +1,23 @@
+toggle_beeper:
+  fields:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: svc_ups
+
+start_self_test:
+  fields:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: svc_ups
+
+cancel_self_test:
+  fields:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: svc_ups

@@ -2,106 +2,82 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
-from .coordinator import SvcUpsCoordinator
+from .coordinator import SvcUpsConfigEntry
+from .entity import SvcUpsEntity
+from .model import SvcUpsData
 
-
-@dataclass
-class SvcUpsBinarySensorEntityDescription(BinarySensorEntityDescription):
-    is_on_fn: Callable[[dict[str, Any]], bool] = lambda data: False
+PARALLEL_UPDATES = 0
 
 
-BINARY_SENSOR_TYPES: tuple[SvcUpsBinarySensorEntityDescription, ...] = (
-    SvcUpsBinarySensorEntityDescription(
+@dataclass(frozen=True, kw_only=True)
+class SvcUpsBinarySensorDescription(BinarySensorEntityDescription):
+    is_on_fn: Callable[[SvcUpsData], bool]
+
+
+BINARY_SENSOR_TYPES: tuple[SvcUpsBinarySensorDescription, ...] = (
+    SvcUpsBinarySensorDescription(
         key="ac_power",
-        name="Сеть 220V подключена",
+        translation_key="ac_power",
         device_class=BinarySensorDeviceClass.PLUG,
-        is_on_fn=lambda data: data.get("ac_status") == "Normal",
+        is_on_fn=lambda d: d.ac_ok,
     ),
-    SvcUpsBinarySensorEntityDescription(
+    SvcUpsBinarySensorDescription(
         key="battery_low",
-        name="Батарея разряжена",
+        translation_key="battery_low",
         device_class=BinarySensorDeviceClass.BATTERY,
-        is_on_fn=lambda data: data.get("battery_status") == "Battery Low",
+        is_on_fn=lambda d: d.battery_low,
     ),
-    SvcUpsBinarySensorEntityDescription(
-        key="boost_buck",
-        name="Стабилизатор AVR (Boost/Buck)",
-        icon="mdi:sine-wave",
-        is_on_fn=lambda data: bool(data.get("boost_buck")),
-    ),
-    SvcUpsBinarySensorEntityDescription(
+    SvcUpsBinarySensorDescription(key="boost_buck", translation_key="boost_buck", is_on_fn=lambda d: d.bypass),
+    SvcUpsBinarySensorDescription(
         key="ups_problem",
-        name="Авария / Отказ ИБП",
+        translation_key="ups_problem",
         device_class=BinarySensorDeviceClass.PROBLEM,
-        is_on_fn=lambda data: data.get("ups_status") == "Failed",
+        is_on_fn=lambda d: d.ups_failed,
     ),
-    SvcUpsBinarySensorEntityDescription(
+    SvcUpsBinarySensorDescription(
         key="test_in_progress",
-        name="Самотестирование активно",
-        icon="mdi:progress-check",
-        is_on_fn=lambda data: bool(data.get("test_in_progress")),
+        translation_key="test_in_progress",
+        is_on_fn=lambda d: d.test_in_progress,
+    ),
+    SvcUpsBinarySensorDescription(
+        key="shutdown_active",
+        translation_key="shutdown_active",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        is_on_fn=lambda d: d.shutdown_active,
     ),
 )
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: SvcUpsConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Создание бинарных сенсоров ИБП."""
-    coordinator: SvcUpsCoordinator = hass.data[DOMAIN][entry.entry_id]
-
-    entities = [
-        SvcUpsBinarySensor(coordinator, entry, description)
-        for description in BINARY_SENSOR_TYPES
-    ]
-    async_add_entities(entities)
+    coordinator = entry.runtime_data
+    async_add_entities(SvcUpsBinarySensor(coordinator, d) for d in BINARY_SENSOR_TYPES)
 
 
-class SvcUpsBinarySensor(CoordinatorEntity[SvcUpsCoordinator], BinarySensorEntity):
+class SvcUpsBinarySensor(SvcUpsEntity, BinarySensorEntity):
     """Сущность бинарного сенсора SVC UPS."""
 
-    entity_description: SvcUpsBinarySensorEntityDescription
+    entity_description: SvcUpsBinarySensorDescription
 
-    def __init__(
-        self,
-        coordinator: SvcUpsCoordinator,
-        entry: ConfigEntry,
-        description: SvcUpsBinarySensorEntityDescription,
-    ) -> None:
-        super().__init__(coordinator)
-        self.entry = entry
+    def __init__(self, coordinator, description: SvcUpsBinarySensorDescription) -> None:
+        super().__init__(coordinator, description.key)
         self.entity_description = description
-        self._attr_unique_id = f"{entry.entry_id}_{description.key}"
-        self._attr_name = f"SVC UPS {description.name}"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Информация об устройстве: Версия ПО и Версия аппаратного обеспечения."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.entry.entry_id)},
-            name=f"{self.coordinator.company} {self.coordinator.model}",
-            manufacturer=self.coordinator.company,
-            model=self.coordinator.model,
-            sw_version=self.coordinator.sw_version,
-            hw_version=self.coordinator.hw_version,
-        )
 
     @property
     def is_on(self) -> bool:

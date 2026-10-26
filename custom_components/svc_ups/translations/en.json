@@ -1,0 +1,189 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "SVC Richcomm UPS",
+        "description": "Detected UPS bridges: {found}. A bridge is identified by VID 0925 / PID 1234.",
+        "data": {
+          "device": "HID device",
+          "baud": "Bridge UART speed (baud)",
+          "scan_interval": "Polling interval"
+        },
+        "data_description": {
+          "device": "Path to the hiddev node, e.g. /dev/usb/hiddev0.",
+          "baud": "Leave 2400 unless the UPS uses a different speed.",
+          "scan_interval": "Seconds between status polls (5-300)."
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure SVC UPS",
+        "description": "Detected UPS bridges: {found}. A bridge is identified by VID 0925 / PID 1234.",
+        "data": {
+          "device": "HID device",
+          "baud": "Bridge UART speed (baud)"
+        },
+        "data_description": {
+          "device": "Path to the hiddev node, e.g. /dev/usb/hiddev0.",
+          "baud": "Leave 2400 unless the UPS uses a different speed."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot open the device or it is not a Richcomm UPS bridge.",
+      "no_response": "The bridge opened but the UPS does not answer the Q1 command."
+    },
+    "abort": {
+      "already_configured": "This UPS is already configured.",
+      "reconfigure_successful": "Settings updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "SVC UPS options",
+        "data": {
+          "scan_interval": "Polling interval"
+        },
+        "data_description": {
+          "scan_interval": "Seconds between status polls (5-300)."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "input_voltage": {
+        "name": "Input voltage"
+      },
+      "output_voltage": {
+        "name": "Output voltage"
+      },
+      "battery_voltage": {
+        "name": "Battery voltage"
+      },
+      "battery_level": {
+        "name": "Battery level"
+      },
+      "load_percent": {
+        "name": "Load"
+      },
+      "frequency": {
+        "name": "Output frequency"
+      },
+      "temperature": {
+        "name": "Temperature"
+      },
+      "model": {
+        "name": "UPS model"
+      },
+      "firmware_version": {
+        "name": "UPS firmware version"
+      },
+      "rated_voltage": {
+        "name": "Rated voltage"
+      },
+      "rated_current": {
+        "name": "Rated current"
+      },
+      "rated_battery_voltage": {
+        "name": "Rated battery voltage"
+      },
+      "rated_frequency": {
+        "name": "Rated frequency"
+      },
+      "raw_response": {
+        "name": "Raw Q1 response"
+      },
+      "ac_status": {
+        "name": "Mains status",
+        "state": {
+          "normal": "Normal",
+          "utility_fail": "Mains failure"
+        }
+      },
+      "ups_status": {
+        "name": "UPS status",
+        "state": {
+          "normal": "Normal",
+          "failed": "Failed"
+        }
+      }
+    },
+    "binary_sensor": {
+      "ac_power": {
+        "name": "Mains connected"
+      },
+      "battery_low": {
+        "name": "Battery low"
+      },
+      "boost_buck": {
+        "name": "AVR (boost/buck)"
+      },
+      "ups_problem": {
+        "name": "UPS failure"
+      },
+      "test_in_progress": {
+        "name": "Self-test active"
+      },
+      "shutdown_active": {
+        "name": "Shutdown active"
+      }
+    },
+    "switch": {
+      "beeper": {
+        "name": "Beeper"
+      }
+    },
+    "button": {
+      "start_self_test": {
+        "name": "Start self-test (10 s)"
+      },
+      "cancel_self_test": {
+        "name": "Cancel self-test"
+      },
+      "toggle_beeper": {
+        "name": "Toggle beeper"
+      }
+    }
+  },
+  "exceptions": {
+    "command_failed": {
+      "message": "UPS command failed: {error}"
+    },
+    "entry_not_found": {
+      "message": "No loaded SVC UPS entry with id {entry_id}."
+    }
+  },
+  "services": {
+    "toggle_beeper": {
+      "name": "Toggle beeper",
+      "description": "Toggles the UPS beeper and waits for the UPS to confirm the new state.",
+      "fields": {
+        "entry_id": {
+          "name": "UPS",
+          "description": "Config entry; all UPS units if omitted."
+        }
+      }
+    },
+    "start_self_test": {
+      "name": "Start self-test",
+      "description": "Starts the 10-second battery test (T).",
+      "fields": {
+        "entry_id": {
+          "name": "UPS",
+          "description": "Config entry; all UPS units if omitted."
+        }
+      }
+    },
+    "cancel_self_test": {
+      "name": "Cancel self-test",
+      "description": "Cancels a running battery test (CT).",
+      "fields": {
+        "entry_id": {
+          "name": "UPS",
+          "description": "Config entry; all UPS units if omitted."
+        }
+      }
+    }
+  }
+}
